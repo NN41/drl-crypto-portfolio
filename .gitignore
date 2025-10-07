@@ -1,0 +1,87 @@
+# ===================================================================
+# Standard Python Cache and Artefacts
+# ===================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ===================================================================
+# Distribution / Packaging
+# ===================================================================
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===================================================================
+# Testing and Coverage Reports
+# ===================================================================
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# ===================================================================
+# Virtual Environments
+# ===================================================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ===================================================================
+# IDE and Editor specific
+# ===================================================================
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# PyCharm
+.idea/
+
+# Jupyter
+.ipynb_checkpoints
+
+# ===================================================================
+# Project-Specific Files
+# ===================================================================
+# research papers
+docs/*
+
+# Generated TensorBoard logs
+runs/*
+
+# Trained model files
+results/models/*.pth
+
+# Data files
+data/*
