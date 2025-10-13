@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/nickn/PythonProjects/reinforcement_learning/policy_gradient_methods/src/**)",
+      "Read(//c/Users/nickn/PythonProjects/reinforcement_learning/policy_gradient_methods/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

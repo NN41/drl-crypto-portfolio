@@ -247,4 +247,38 @@ fig.show()
 
 # %%
 
-import stable_baselines3
+np.prod(env.observation_space.shape), env.action_space.shape[0]
+
+# %%
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class EIIENet(nn.Module):
+    def __init__(self, n_assets, n_periods, n_features, hidden_dim=32):
+        super().__init__()
+        input_dim = n_assets * n_periods * n_features
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_assets)
+        )
+
+    def forward(self, obs):
+        if obs.dim() == 3:
+            obs = obs.unsqueeze(0)
+        logits = self.net(obs)
+        return F.softmax(logits, dim=-1)
+
+n_assets, n_periods, n_features = env.observation_space.shape
+policy = EIIENet(n_assets, n_periods, n_features)
+
+obs = env.observation_space.sample()
+obs_tensor = torch.FloatTensor(obs)
+weights = policy(obs_tensor)
+
+weights
+
+# %%
