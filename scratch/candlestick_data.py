@@ -16,9 +16,9 @@ def unix_to_datetime(unix_timestamp_ms: int) -> datetime:
     return datetime.fromtimestamp(unix_timestamp_ms / 1000, tz=timezone.utc)
 
 start_date = '2021-01-01'
-end_date = '2025-10-07'
+end_date = '2025-10-15'
 resolution = '30'
-instrument_name = 'ETH-PERPETUAL'
+instrument_name = 'BTC-PERPETUAL'
 
 # %%
 
