@@ -29,7 +29,7 @@ all_close_datetimes = df_btc['datetime'].values
 
 n_features, n_non_cash_assets, n_periods = all_prices.shape
 n_recent_periods = 50
-batch_size = 5
+batch_size = 500
 
 n_batch_periods = n_recent_periods + (batch_size - 1) + 1 # the total number of periods needed to run and evaluate the agent on a batch of consecutive timesteps
 batch_start_idx = np.random.randint(0, n_periods - n_batch_periods + 1)
@@ -72,9 +72,12 @@ from src.networks import CNNPolicy
 
 device = 'cpu'
 
-
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods)
 optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
+
+# %%
+
+policy.train()
 
 batch_normalized_price_histories_tensor = torch.from_numpy(batch_normalized_price_histories).float().to(device)
 batch_price_relatives_tensor = torch.from_numpy(batch_price_relatives).float().to(device)
@@ -92,7 +95,10 @@ batch_mu = torch.ones(batch_size)
 batch_log_returns = torch.log(torch.sum(batch_y * batch_w, dim=1) * batch_mu)
 average_log_return = torch.mean(batch_log_returns)
 loss = -average_log_return
+print(average_log_return.item())
 
 optimizer.zero_grad()
 loss.backward()
 optimizer.step()
+
+print(f"  Cash bias value: {policy.cash_bias.item():.6f}")

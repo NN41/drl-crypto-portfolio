@@ -1,3 +1,4 @@
+# %%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,3 +45,23 @@ class CNNPolicy(nn.Module):
         weights = F.softmax(logits, dim=1)
 
         return weights
+    
+if __name__ == '__main__':
+
+    policy = CNNPolicy(n_features=3, n_recent_periods=50)
+
+    total_params = sum(p.numel() for p in policy.parameters())
+    trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+
+    print(f"\nTotal parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+
+    print("\nParameter Details:")
+    for name, param in policy.named_parameters():
+        print(f"  {name:30s} | Shape: {str(tuple(param.shape)):20s} | Params: {param.numel():,}")
+        
+    print("\nCritical Parameters:")
+    print(f"  Cash bias value: {policy.cash_bias.item():.6f}")
+    print(f"  Cash bias requires_grad: {policy.cash_bias.requires_grad}")
+
+# %%
