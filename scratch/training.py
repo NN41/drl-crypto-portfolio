@@ -1,13 +1,29 @@
 # %%
 
-import gymnasium as gym
 import numpy as np
 import pandas as pd
-from typing import Optional
 import matplotlib.pyplot as plt
 from datetime import timedelta
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from src.networks import CNNPolicy
+
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+print(f"Using device {device}")
+
+def seed_everything(seed=42):
+    # Complete deterministic behavior on GPU operations is difficult due to CUDA optimizations.
+    # The following gives a good balance between reproducibility and performance.
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = True 
+
+seed_everything(seed=42)
+
+# %%
 
 RESOLUTION_MINUTES = 30
 
@@ -61,48 +77,6 @@ def generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_siz
         "previous_weights": batch_previous_weights
     }
 
-
-
-
-# %%
-
-
-n_features, n_non_cash_assets, n_periods = all_prices.shape
-n_recent_periods = 50
-batch_size = 50
-
-portfolio_vector_memory = np.ones((n_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
-valid_batch_data_start_indices = range(0, n_periods - n_recent_periods - batch_size + 1)
-
-
-
-
-
-
-# %%
-
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from src.networks import CNNPolicy
-
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-print(f"Using device {device}")
-
-
-# %%
-
-policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
-optimizer = torch.optim.Adam(policy.parameters(), lr=3e-5, weight_decay=1e-8)
-
-policy.train()
-
-# %%
-
-commission_rate = 0.0025 # 0.0005 = 5 bips
-
 def next_mu(mu, c_s, c_p, w_prime, w):
     return 1 / (1 - c_p * w[:, 0:1]) * (1 - c_p * w_prime[:, 0:1] - (c_s + c_p - c_s * c_p) * torch.sum(F.relu(w_prime[:, 1:] - mu * w[:, 1:]), dim=1, keepdim=True))
 
@@ -118,6 +92,21 @@ def approximate_mu(w_prev, y, w, commission_rate):
 
     mu = all_mu[-1]
     return mu
+
+# %%
+
+commission_rate = 0.0025 # 0.0005 = 5 bips
+n_features, n_non_cash_assets, n_periods = all_prices.shape
+n_recent_periods = 50
+batch_size = 50
+
+portfolio_vector_memory = np.ones((n_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+valid_batch_data_start_indices = range(0, n_periods - n_recent_periods - batch_size + 1)
+
+policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
+optimizer = torch.optim.Adam(policy.parameters(), lr=3e-5, weight_decay=1e-8)
+
+policy.train()
 
 
 # %%
@@ -172,13 +161,14 @@ for epoch_number in range(n_epochs):
     update_avg_log_return = update_total_log_return / update_number_of_steps
     update_avg_log_returns.append(update_avg_log_return)
     print(f"\tAvg log return since last update: {update_avg_log_return:.9f}")
+
+
 # %%
 
 fig, ax = plt.subplots()
 ax.plot(update_avg_log_returns)
 ax.plot(pd.Series(update_avg_log_returns).rolling(window=100).mean())
 ax.set_ylim((0.0005,0.001))
-
 
 
 # %%
