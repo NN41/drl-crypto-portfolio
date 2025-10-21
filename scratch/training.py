@@ -13,6 +13,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from src.networks import CNNPolicy
 
+commission_rate = 0.0005 # 0.0005 = 5 bips
+n_recent_periods = 50
+batch_size = int(50 * 5.5) # x5.5 to match the number of training data points used per 
+
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 print(f"Using device {device}")
 
@@ -23,6 +27,7 @@ def seed_everything(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
+
 
 
 # %%
@@ -37,28 +42,28 @@ df_eth['datetime'] = pd.to_datetime(df_eth['datetime'], utc=True) + timedelta(mi
 
 assets = ['btc', 'eth']
 features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym (O, H, L, C)
+n_train_periods = 32504
+n_test_periods = 2456
+n_total_periods = n_train_periods + n_test_periods
 
 all_prices = np.stack([
     df_btc[features].values,
     df_eth[features].values
 ]).transpose(2, 0, 1) # of shape (n_features, n_non_cash_assets, n_periods) as in paper
 
-all_close_datetimes = df_btc['datetime'].values
-
-
-n_train_periods = 32504
-
-all_prices = all_prices[:, :, -n_train_periods:]
-all_close_datetimes = all_close_datetimes[-n_train_periods:]
+test_train_prices = all_prices[:, :, -n_total_periods:]
+train_prices = test_train_prices[:, :, :n_train_periods]
+test_prices = test_train_prices[:, :, -n_test_periods:] # never seen before prices
 
 # %%
 
-def generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, all_prices):
+def generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, prices_array):
+    assert batch_data_start_idx >= 0, "Indexing must be non-negative (i.e. starting from the front, not from the back)"
     n_batch_periods = n_recent_periods + (batch_size - 1) + 1 # the total number of periods needed to run and evaluate the agent on a batch of consecutive timesteps
     batch_start_idx = batch_data_start_idx + n_recent_periods - 1 # at this index, we are at time t, and we have to choose w_t based on w_{t-1}
     batch_end_idx = batch_data_start_idx + n_batch_periods - 1
 
-    batch_prices = all_prices[:, :, batch_data_start_idx:batch_end_idx+1] # +1 is crucial
+    batch_prices = prices_array[:, :, batch_data_start_idx:batch_end_idx+1] # +1 is crucial
     assert batch_prices.shape[-1] == n_batch_periods, "Number of periods in batch price history is different from expected"
 
     batch_normalized_price_histories = []
@@ -71,8 +76,8 @@ def generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_siz
         batch_normalized_price_histories.append(normalized_price_history)
     batch_normalized_price_histories = np.stack(batch_normalized_price_histories)
 
-    batch_current_close_prices = all_prices[-1:, :, batch_start_idx:batch_start_idx+batch_size]
-    batch_next_close_prices = all_prices[-1:, :, batch_start_idx+1:batch_start_idx+batch_size+1]
+    batch_current_close_prices = prices_array[-1:, :, batch_start_idx:batch_start_idx+batch_size]
+    batch_next_close_prices = prices_array[-1:, :, batch_start_idx+1:batch_start_idx+batch_size+1]
     batch_price_relatives = np.expand_dims((batch_next_close_prices / batch_current_close_prices).transpose(2,0,1), axis=-1)
 
     batch_previous_weights = portfolio_vector_memory[batch_start_idx-1:batch_start_idx-1+batch_size]
@@ -80,6 +85,8 @@ def generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_siz
     return {
         "data_start_idx": batch_data_start_idx,
         "first_decision_idx": batch_start_idx, # the index corresponding to decision time of the weights
+        "last_decision_idx": batch_start_idx + batch_size - 1, # index corresponding to time of last decision
+        "data_last_idx": batch_end_idx, # index of very last price datapoint needed for evaluation preceding decision
         "normalized_price_histories": batch_normalized_price_histories,
         "price_relatives": batch_price_relatives,
         "previous_weights": batch_previous_weights
@@ -101,27 +108,56 @@ def approximate_mu(w_prev, y, w, commission_rate):
     mu = all_mu[-1]
     return mu
 
+def perform_one_minibatch_update(batch, policy, optimizer, device=device, batch_size=batch_size, commission_rate=commission_rate):
+    batch_normalized_price_histories_tensor = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
+    batch_price_relatives_tensor = torch.from_numpy(batch['price_relatives']).float().to(device)
+    batch_previous_weights_tensor = torch.from_numpy(batch['previous_weights']).float().to(device)
+
+    policy.train()
+    batch_w = policy(batch_normalized_price_histories_tensor, batch_previous_weights_tensor)
+
+    batch_y = torch.cat([
+        torch.ones((batch_size, 1)).to(device),
+        batch_price_relatives_tensor.squeeze(1).squeeze(-1)
+    ], dim=1)
+
+    # batch_mu = torch.ones(batch_size).to(device)
+    batch_mu = approximate_mu(batch_previous_weights_tensor, batch_y, batch_w, commission_rate)
+
+    batch_log_returns = torch.log(torch.sum(batch_y * batch_w, dim=1) * batch_mu)
+    average_log_return = torch.mean(batch_log_returns)
+    loss = -average_log_return
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    return batch_log_returns, batch_w
+
+
+
 # %%
 seed_everything(seed=42)
 
-commission_rate = 0.0005 # 0.0005 = 5 bips
-n_features, n_non_cash_assets, n_periods = all_prices.shape
-n_recent_periods = 50
-batch_size = int(50 * 5.5) # x5.5 to match the number of training data points used per 
+
+
+n_features, n_non_cash_assets, n_train_periods = train_prices.shape
 learning_rate = 3e-5 #1e-4 # as opposed to the paper's 3e-5
 n_epochs = 1000
 n_batches_per_epoch = 2000
 n_total_updates = n_epochs * n_batches_per_epoch
 
-portfolio_vector_memory = np.ones((n_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
-valid_batch_data_start_indices = range(0, n_periods - n_recent_periods - batch_size + 1)
+portfolio_vector_memory = np.ones((n_train_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+valid_batch_data_start_indices = range(0, n_train_periods - n_recent_periods - batch_size + 1)
 
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=1e-8)
 
-policy.train()
 
-writer = SummaryWriter(log_dir=f'runs/experiment_{datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")}')
+
+run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+writer = SummaryWriter(log_dir=f'runs/experiment_{run_timestamp}')
+
 
 update_avg_log_returns = []
 for epoch_number in range(n_epochs):
@@ -133,11 +169,13 @@ for epoch_number in range(n_epochs):
 
     for batch_number, batch_data_start_idx in enumerate(batch_data_start_indices_for_epoch):
 
-        batch = generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, all_prices)
+        batch = generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, train_prices)
+
         batch_normalized_price_histories_tensor = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
         batch_price_relatives_tensor = torch.from_numpy(batch['price_relatives']).float().to(device)
         batch_previous_weights_tensor = torch.from_numpy(batch['previous_weights']).float().to(device)
 
+        policy.train()
         batch_w = policy(batch_normalized_price_histories_tensor, batch_previous_weights_tensor)
 
         batch_y = torch.cat([
@@ -152,12 +190,12 @@ for epoch_number in range(n_epochs):
         average_log_return = torch.mean(batch_log_returns)
         loss = -average_log_return
 
-        update_total_log_return += np.sum(batch_log_returns.detach().cpu().numpy())
-        update_number_of_steps += batch_log_returns.shape[0]
-
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        update_total_log_return += np.sum(batch_log_returns.detach().cpu().numpy())
+        update_number_of_steps += batch_log_returns.shape[0]
 
         # update portfolio memory vector
         batch_first_decision_idx = batch['first_decision_idx']
@@ -180,7 +218,7 @@ writer.close()
 # Save the trained model
 save_dir = './models'
 os.makedirs(save_dir, exist_ok=True)
-model_path = os.path.join(save_dir, f'cnn_policy_{datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")}.pt')
+model_path = os.path.join(save_dir, f'cnn_policy_{run_timestamp}.pt')
 torch.save({
     'model_state_dict': policy.state_dict(),
     'optimizer_state_dict': optimizer.state_dict(),
@@ -191,4 +229,75 @@ torch.save({
     'n_recent_periods': n_recent_periods
 }, model_path)
 print(f"Model saved to {model_path}")
+
+
+# %%
+
+remaining_next_prices = test_prices.copy()
+current_train_prices = train_prices.copy()
+current_portfolio_vector_memory = portfolio_vector_memory.copy()
+
+latest_price_history = train_prices[:, :, -n_recent_periods:]
+latest_close_prices = latest_price_history[-1:, :, -1:]
+latest_normalized_price_history = (latest_price_history / latest_close_prices)[np.newaxis, :]
+
+previous_weights = current_portfolio_vector_memory[np.newaxis, -2]
+
+latest_normalized_price_history_tensor = torch.tensor(latest_normalized_price_history, dtype=torch.float32, device=device)
+previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=device)
+
+policy.eval()
+with torch.no_grad():
+    next_weights_tensor = policy(latest_normalized_price_history_tensor, previous_weights_tensor)
+
+next_weights = next_weights_tensor.detach().cpu().numpy().squeeze()
+
+current_portfolio_vector_memory[-1] = next_weights
+
+# %%
+
+batch_size = 2
+n_recent_periods = 2
+
+n_current_train_periods = current_train_prices.shape[-1]
+
+n_online_batches = 30
+geometric_sample = np.random.geometric(p=1, size=n_online_batches)
+valid_online_batch_data_start_indices = -geometric_sample - batch_size - (n_recent_periods - 1)
+valid_online_batch_data_start_indices = n_current_train_periods + valid_online_batch_data_start_indices
+
+online_batch_data_start_idx = valid_online_batch_data_start_indices[0]
+
+generate_consecutive_batch(online_batch_data_start_idx, n_recent_periods, batch_size, current_portfolio_vector_memory, current_train_prices)
+
+# %%
+
+
+
+
+
+# %%
+current_portfolio_vector_memory = np.concat((current_portfolio_vector_memory, np.array([[0] * current_portfolio_vector_memory.shape[1]])))
+
+# %%
+
+
+
+next_prices = remaining_next_prices[:, :, 0:1]
+remaining_next_prices = remaining_next_prices[:, :, 1:]
+
+current_train_prices = np.concatenate([current_train_prices, next_prices], axis=2)
+
+current_train_prices
+
+# %%
+
+
+
+n_current_train_periods = current_train_prices.shape[-1]
+valid_batch_data_start_indices = range(0, n_current_train_periods - n_recent_periods - batch_size + 1)
+valid_batch_data_start_indices
+
+# %%
+
 
