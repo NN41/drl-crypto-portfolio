@@ -3,11 +3,14 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
+import os
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+
 from src.networks import CNNPolicy
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -19,9 +22,8 @@ def seed_everything(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = True 
+    torch.backends.cudnn.benchmark = True
 
-seed_everything(seed=42)
 
 # %%
 
@@ -42,6 +44,12 @@ all_prices = np.stack([
 ]).transpose(2, 0, 1) # of shape (n_features, n_non_cash_assets, n_periods) as in paper
 
 all_close_datetimes = df_btc['datetime'].values
+
+
+n_train_periods = 32504
+
+all_prices = all_prices[:, :, -n_train_periods:]
+all_close_datetimes = all_close_datetimes[-n_train_periods:]
 
 # %%
 
@@ -94,29 +102,28 @@ def approximate_mu(w_prev, y, w, commission_rate):
     return mu
 
 # %%
+seed_everything(seed=42)
 
-commission_rate = 0.0025 # 0.0005 = 5 bips
+commission_rate = 0.0005 # 0.0005 = 5 bips
 n_features, n_non_cash_assets, n_periods = all_prices.shape
 n_recent_periods = 50
-batch_size = 50
+batch_size = int(50 * 5.5) # x5.5 to match the number of training data points used per 
+learning_rate = 3e-5 #1e-4 # as opposed to the paper's 3e-5
+n_epochs = 1000
+n_batches_per_epoch = 2000
+n_total_updates = n_epochs * n_batches_per_epoch
 
 portfolio_vector_memory = np.ones((n_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
 valid_batch_data_start_indices = range(0, n_periods - n_recent_periods - batch_size + 1)
 
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
-optimizer = torch.optim.Adam(policy.parameters(), lr=3e-5, weight_decay=1e-8)
+optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=1e-8)
 
 policy.train()
 
-
-# %%
-
-n_epochs = 1000
-n_batches_per_epoch = 2000
-n_total_updates = n_epochs * n_batches_per_epoch
+writer = SummaryWriter(log_dir=f'runs/experiment_{datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")}')
 
 update_avg_log_returns = []
-
 for epoch_number in range(n_epochs):
     print(f"Epoch {epoch_number+1} / {n_epochs}")
     batch_data_start_indices_for_epoch = np.random.choice(valid_batch_data_start_indices, size=n_batches_per_epoch)
@@ -162,6 +169,13 @@ for epoch_number in range(n_epochs):
     update_avg_log_returns.append(update_avg_log_return)
     print(f"\tAvg log return since last update: {update_avg_log_return:.9f}")
 
+    writer.add_scalar('Train/AvgLogReturn', update_avg_log_return, epoch_number+1)
+    for name, param in policy.named_parameters():
+        writer.add_histogram(f'Weights/{name}', param, epoch_number+1)
+        if param.grad is not None:
+            writer.add_histogram(f'Gradients/{name}', param.grad, epoch_number+1)
+
+writer.close()
 
 # %%
 
