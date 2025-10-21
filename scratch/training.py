@@ -177,14 +177,18 @@ for epoch_number in range(n_epochs):
 
 writer.close()
 
-# %%
-
-fig, ax = plt.subplots()
-ax.plot(update_avg_log_returns)
-ax.plot(pd.Series(update_avg_log_returns).rolling(window=100).mean())
-ax.set_ylim((0.0005,0.001))
-
-
-# %%
-
+# Save the trained model
+save_dir = './models'
+os.makedirs(save_dir, exist_ok=True)
+model_path = os.path.join(save_dir, f'cnn_policy_{datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")}.pt')
+torch.save({
+    'model_state_dict': policy.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+    'n_epochs': n_epochs,
+    'commission_rate': commission_rate,
+    'learning_rate': learning_rate,
+    'n_features': n_features,
+    'n_recent_periods': n_recent_periods
+}, model_path)
+print(f"Model saved to {model_path}")
 

@@ -81,7 +81,7 @@ docs/*
 runs/*
 
 # Trained model files
-results/models/*.pth
+models/*
 
 # Data files
 data/*
