@@ -16,6 +16,8 @@ from src.networks import CNNPolicy
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50
 batch_size = int(50 * 5.5) # x5.5 to match the number of training data points used per 
+n_online_batches = 30
+geometric_parameter = 5e-5
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 print(f"Using device {device}")
@@ -134,12 +136,44 @@ def perform_one_minibatch_update(batch, policy, optimizer, device=device, batch_
 
     return batch_log_returns, batch_w
 
+def run_one_epoch(batch_data_start_indices_for_epoch, portfolio_vector_memory, train_prices, policy, optimizer, n_recent_periods=n_recent_periods, batch_size=batch_size, device=device, commission_rate=commission_rate):
 
+    update_total_log_return = 0
+    update_number_of_steps = 0
+
+    for batch_number, batch_data_start_idx in enumerate(batch_data_start_indices_for_epoch):
+
+        batch = generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, train_prices)
+        batch_log_returns, batch_w = perform_one_minibatch_update(batch, policy, optimizer, device=device, batch_size=batch_size, commission_rate=commission_rate)
+
+        update_total_log_return += np.sum(batch_log_returns.detach().cpu().numpy())
+        update_number_of_steps += batch_log_returns.shape[0]
+
+        # update portfolio memory vector
+        batch_first_decision_idx = batch['first_decision_idx']
+        batch_weights = batch_w.detach().cpu().numpy()
+        portfolio_vector_memory[batch_first_decision_idx:batch_first_decision_idx+batch_size] = batch_weights
+
+    update_avg_log_return = update_total_log_return / update_number_of_steps
+    return update_avg_log_return
+
+def sample_valid_online_batch_data_start_indices(current_train_prices, n_online_batches=n_online_batches, geometric_parameter=geometric_parameter):
+
+    n_current_train_periods = current_train_prices.shape[-1]
+    max_valid_index = n_current_train_periods - batch_size - (n_recent_periods - 1)
+
+    valid_online_batch_data_start_indices = []
+    while len(valid_online_batch_data_start_indices) < n_online_batches:
+        geometric_sample = np.random.geometric(p=geometric_parameter, size=n_online_batches)
+        indices_sample = max_valid_index - geometric_sample
+        valid_indices_sample = indices_sample[indices_sample >= 0]
+        valid_online_batch_data_start_indices.extend(valid_indices_sample)
+    valid_online_batch_data_start_indices = np.array(valid_online_batch_data_start_indices)
+
+    return valid_online_batch_data_start_indices
 
 # %%
 seed_everything(seed=42)
-
-
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
 learning_rate = 3e-5 #1e-4 # as opposed to the paper's 3e-5
@@ -154,65 +188,20 @@ policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=1e-8)
 
 
-
 run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+
 writer = SummaryWriter(log_dir=f'runs/experiment_{run_timestamp}')
-
-
-update_avg_log_returns = []
-for epoch_number in range(n_epochs):
-    print(f"Epoch {epoch_number+1} / {n_epochs}")
+for epoch in range(n_epochs):
+    print(f"Epoch {epoch+1} / {n_epochs}")
     batch_data_start_indices_for_epoch = np.random.choice(valid_batch_data_start_indices, size=n_batches_per_epoch)
+    epoch_avg_log_return = run_one_epoch(batch_data_start_indices_for_epoch, portfolio_vector_memory, train_prices, policy, optimizer)
+    print(f"\tEpoch avg log-return: {epoch_avg_log_return:.9f}")
 
-    update_total_log_return = 0
-    update_number_of_steps = 0
-
-    for batch_number, batch_data_start_idx in enumerate(batch_data_start_indices_for_epoch):
-
-        batch = generate_consecutive_batch(batch_data_start_idx, n_recent_periods, batch_size, portfolio_vector_memory, train_prices)
-
-        batch_normalized_price_histories_tensor = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
-        batch_price_relatives_tensor = torch.from_numpy(batch['price_relatives']).float().to(device)
-        batch_previous_weights_tensor = torch.from_numpy(batch['previous_weights']).float().to(device)
-
-        policy.train()
-        batch_w = policy(batch_normalized_price_histories_tensor, batch_previous_weights_tensor)
-
-        batch_y = torch.cat([
-            torch.ones((batch_size, 1)).to(device),
-            batch_price_relatives_tensor.squeeze(1).squeeze(-1)
-        ], dim=1)
-
-        # batch_mu = torch.ones(batch_size).to(device)
-        batch_mu = approximate_mu(batch_previous_weights_tensor, batch_y, batch_w, commission_rate)
-
-        batch_log_returns = torch.log(torch.sum(batch_y * batch_w, dim=1) * batch_mu)
-        average_log_return = torch.mean(batch_log_returns)
-        loss = -average_log_return
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        update_total_log_return += np.sum(batch_log_returns.detach().cpu().numpy())
-        update_number_of_steps += batch_log_returns.shape[0]
-
-        # update portfolio memory vector
-        batch_first_decision_idx = batch['first_decision_idx']
-        batch_weights = batch_w.detach().cpu().numpy()
-        portfolio_vector_memory[batch_first_decision_idx:batch_first_decision_idx+batch_size] = batch_weights
-
-    print(f"Batch {(epoch_number+1)*n_batches_per_epoch} out of {n_total_updates}:")
-    update_avg_log_return = update_total_log_return / update_number_of_steps
-    update_avg_log_returns.append(update_avg_log_return)
-    print(f"\tAvg log return since last update: {update_avg_log_return:.9f}")
-
-    writer.add_scalar('Train/AvgLogReturn', update_avg_log_return, epoch_number+1)
+    writer.add_scalar('Train/AvgLogReturn', epoch_avg_log_return, epoch+1)
     for name, param in policy.named_parameters():
-        writer.add_histogram(f'Weights/{name}', param, epoch_number+1)
+        writer.add_histogram(f'Weights/{name}', param, epoch+1)
         if param.grad is not None:
-            writer.add_histogram(f'Gradients/{name}', param.grad, epoch_number+1)
-
+            writer.add_histogram(f'Gradients/{name}', param.grad, epoch+1)
 writer.close()
 
 # Save the trained model
@@ -232,6 +221,8 @@ print(f"Model saved to {model_path}")
 
 
 # %%
+
+n_online_epochs = test_prices.shape[-1]
 
 remaining_next_prices = test_prices.copy()
 current_train_prices = train_prices.copy()
@@ -256,19 +247,17 @@ current_portfolio_vector_memory[-1] = next_weights
 
 # %%
 
-batch_size = 2
-n_recent_periods = 2
 
-n_current_train_periods = current_train_prices.shape[-1]
 
-n_online_batches = 30
-geometric_sample = np.random.geometric(p=1, size=n_online_batches)
-valid_online_batch_data_start_indices = -geometric_sample - batch_size - (n_recent_periods - 1)
-valid_online_batch_data_start_indices = n_current_train_periods + valid_online_batch_data_start_indices
+online_epoch = 0
+print(f"Online epoch {online_epoch+1} / {n_online_epochs}")
+valid_online_batch_data_start_indices = sample_valid_online_batch_data_start_indices(current_train_prices)
+online_epoch_avg_log_return = run_one_epoch(valid_online_batch_data_start_indices, current_portfolio_vector_memory, current_train_prices, policy, optimizer)
+print(f"\tEpoch avg log-return: {online_epoch_avg_log_return:.9f}")
+writer.add_scalar('TrainOnline/AvgLogReturn', online_epoch_avg_log_return, online_epoch+1)
 
-online_batch_data_start_idx = valid_online_batch_data_start_indices[0]
 
-generate_consecutive_batch(online_batch_data_start_idx, n_recent_periods, batch_size, current_portfolio_vector_memory, current_train_prices)
+# %%
 
 # %%
 
