@@ -124,7 +124,8 @@ def next_mu(mu, c_s, c_p, w_prime, w):
 
 def approximate_mu(w_prev, y, w, commission_rate, train_mode=False, return_w_prime=False):
     '''
-    Approximates the transaction remainder factor mu. All input tensors must include cash component.
+    Approximates the transaction remainder factor mu.
+    All input tensors must include cash component and must contain a batch dimension.
     '''
     steps_train_mode = 10 # 10 is MORE than enough to get the consecutive change below 1e-7
     max_steps_test_mode = 50
@@ -154,7 +155,6 @@ def approximate_mu(w_prev, y, w, commission_rate, train_mode=False, return_w_pri
             # policy network is in eval mode, so we dynamically approximate until the errors between two consecutive iterations are all small enough,
             # or until we have reached the max number of steps.
             consecutive_errors = np.abs((mu_prev - mu_next).detach().cpu().numpy())
-            print(1)
             if np.all(consecutive_errors < threshold) or (step >= max_steps_test_mode):
                 break
 
@@ -237,14 +237,16 @@ n_batches_per_epoch = 2000
 n_total_updates = n_epochs * n_batches_per_epoch
 geometric_parameter = 5e-5
 
+n_available_periods = train_prices.shape[-1]
+prices_array = train_prices
+
 portfolio_vector_memory = np.ones((n_train_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+# %%
 
-n_available_periods = train_prices.shape[-1]
-prices_array=train_prices
+run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 writer = SummaryWriter(log_dir=f'runs/experiment_{run_timestamp}')
 for epoch in range(n_epochs):
@@ -301,7 +303,7 @@ print(f"Model saved to {model_path}")
 # %%
 
 # # Load the trained model
-# model_path = './models/cnn_policy_20251021_081246.pt'
+# model_path = './models/pretrained/cnn_policy_20251030_094203.pt'
 # checkpoint = torch.load(model_path, map_location=device)
 # policy = CNNPolicy(n_features=checkpoint['n_features'], n_recent_periods=checkpoint['n_recent_periods']).to(device)
 # policy.load_state_dict(checkpoint['model_state_dict'])
@@ -309,134 +311,229 @@ print(f"Model saved to {model_path}")
 # print(f"Model trained for {checkpoint['n_epochs']} epochs with commission_rate={checkpoint['commission_rate']}")
 
 # %%
-def run_walk_forward_test(policy, initial_portfolio_weights, train_prices, test_prices, all_datetimes, assets, n_recent_periods, commission_rate, device):
-    """
-    Run walk-forward test on test data with given policy and initial portfolio allocation.
 
-    Args:
-        policy: Callable that takes (normalized_price_history, previous_weights) and returns new_weights
-        initial_portfolio_weights: np.array of shape (n_assets,) including cash
-        train_prices: Training prices of shape (n_features, n_non_cash_assets, n_train_periods)
-        test_prices: Test prices of shape (n_features, n_non_cash_assets, n_test_periods)
-        all_datetimes: Datetimes for entire period (train + test)
-        assets: List of asset names (e.g., ['btc', 'eth'])
-        n_recent_periods: Number of recent periods for price history
-        commission_rate: Transaction commission rate (decimal)
-        device: torch device
+# def run_walk_forward_test(policy, initial_portfolio_weights, train_prices, test_prices, all_datetimes, assets, n_recent_periods, commission_rate, device):
+#     """
+#     Run walk-forward test on test data with given policy and initial portfolio allocation.
 
-    Returns:
-        pd.DataFrame with test results
-    """
-    n_train_periods = train_prices.shape[-1]
-    current_idx = n_train_periods - 1
-    seen_prices = train_prices.copy()
-    unseen_prices = test_prices.copy()
-    current_portfolio_vector_memory = np.tile(initial_portfolio_weights, (n_train_periods - 1, 1))
+#     Args:
+#         policy: Callable that takes (normalized_price_history, previous_weights) and returns new_weights
+#         initial_portfolio_weights: np.array of shape (n_assets,) including cash
+#         train_prices: Training prices of shape (n_features, n_non_cash_assets, n_train_periods)
+#         test_prices: Test prices of shape (n_features, n_non_cash_assets, n_test_periods)
+#         all_datetimes: Datetimes for entire period (train + test)
+#         assets: List of asset names (e.g., ['btc', 'eth'])
+#         n_recent_periods: Number of recent periods for price history
+#         commission_rate: Transaction commission rate (decimal)
+#         device: torch device
 
-    test_results = {
-        'log_returns': [], 
-        'datetimes': [], 
-        'indices': [], 
-        'relative_turnover': [], 
-        'transaction_remainder_factor': []
-    }
-    for asset in assets:
-        test_results[f'weight_before_{asset}'] = []
-        test_results[f'weight_{asset}'] = []
-        test_results[f'close_{asset}'] = []
+#     Returns:
+#         pd.DataFrame with test results
+#     """
+#     n_train_periods = train_prices.shape[-1]
+#     current_idx = n_train_periods - 1
+#     seen_prices = train_prices.copy()
+#     unseen_prices = test_prices.copy()
+#     current_portfolio_vector_memory = np.tile(initial_portfolio_weights, (n_train_periods - 1, 1))
+
+#     test_results = {
+#         'log_returns': [], 
+#         'datetimes': [], 
+#         'indices': [], 
+#         'relative_turnover': [], 
+#         'transaction_remainder_factor': []
+#     }
+#     for asset in assets:
+#         test_results[f'weight_before_{asset}'] = []
+#         test_results[f'weight_{asset}'] = []
+#         test_results[f'close_{asset}'] = []
+
+#     test_results['indices'].append(current_idx)
+#     test_results['datetimes'].append(all_datetimes[current_idx])
+#     test_results['log_returns'].append(None)
+#     test_results['relative_turnover'].append(None)
+#     test_results['transaction_remainder_factor'].append(None)
+#     for asset in assets:
+#         test_results[f'weight_before_{asset}'].append(None)
+
+#     while unseen_prices.shape[-1] > 0:
+#         # At time t, at the start of Period t+1, we observe the price history up to and including time t.
+#         price_history = seen_prices[:, :, -n_recent_periods:]
+#         latest_close_prices = price_history[-1:, :, -1:]
+#         normalized_price_history = price_history / latest_close_prices
+
+#         previous_weights = current_portfolio_vector_memory[-1]
+
+#         # At time t, we choose the weights for the coming period, Period t+1
+#         with torch.no_grad():
+#             normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=device)
+#             previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=device)
+#             new_weights = policy(normalized_price_tensor, previous_weights_tensor)
+#             new_weights = new_weights.squeeze(0).cpu().numpy()
+
+#         for i, asset in enumerate(assets):
+#             test_results[f'weight_{asset}'].append(new_weights[i+1])
+#             test_results[f'close_{asset}'].append(latest_close_prices.squeeze()[i])
+
+#         # We take a step forward to time t+1, and we observe the new (close) prices and compute the price relatives
+#         current_idx += 1
+#         new_close = unseen_prices[-1, :, 0]
+#         previous_close = latest_close_prices.squeeze()
+#         price_relative = np.concatenate([[1.0], new_close / previous_close])
+
+#         # At time t+1, we compute THIS IS WRONG WRONG WRONG. IT SHOULD BE DONE A STEP BACK. SEE EQUATION 21, 22
+#         transaction_remainder_factor, weights_before_rebalancing = approximate_mu(
+#             torch.from_numpy(previous_weights).unsqueeze(0), 
+#             torch.from_numpy(price_relative).unsqueeze(0), 
+#             torch.from_numpy(new_weights).unsqueeze(0), 
+#             commission_rate, 
+#             return_w_prime=True
+#         )
+#         transaction_remainder_factor = transaction_remainder_factor.item()
+#         weights_before_rebalancing = weights_before_rebalancing.squeeze(0).numpy()
+#         log_return = np.log(transaction_remainder_factor * (price_relative @ previous_weights)) # this is the wrong log return
+#         relative_turnover = (1 - transaction_remainder_factor) / commission_rate
+
+#         test_results['indices'].append(current_idx)
+#         test_results['datetimes'].append(all_datetimes[current_idx])
+#         test_results['log_returns'].append(log_return)
+#         test_results['relative_turnover'].append(relative_turnover)
+#         test_results['transaction_remainder_factor'].append(transaction_remainder_factor)
+#         for i, asset in enumerate(assets):
+#             test_results[f'weight_before_{asset}'].append(weights_before_rebalancing[i+1])
+
+#         current_portfolio_vector_memory = np.concatenate([current_portfolio_vector_memory, new_weights[np.newaxis, :]], axis=0)
+#         seen_prices = np.concatenate([seen_prices, unseen_prices[:, :, :1]], axis=-1)
+#         unseen_prices = unseen_prices[:, :, 1:]
+
+#     for i, asset in enumerate(assets):
+#         test_results[f'weight_{asset}'].append(None)
+#         test_results[f'close_{asset}'].append(new_close[i])
+
+#     return pd.DataFrame(test_results)
+
+# %%
+
+initial_portfolio_weights = np.array([1.,0.,0.])
+policy.eval()
+
+seen_prices = train_prices.copy()
+unseen_prices = test_prices.copy()
+
+n_train_periods = seen_prices.shape[-1]
+current_idx = n_train_periods - 1
+
+current_portfolio_vector_memory = np.ones((n_train_periods - 1, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+current_portfolio_vector_memory[-1] = initial_portfolio_weights
+
+test_results = {
+    'log_returns': [], 
+    'datetimes': [], 
+    'indices': [], 
+    'relative_turnover': [], 
+    'transaction_remainder_factor': []
+}
+for i, asset in enumerate(assets):
+    test_results[f'weight_before_{asset}'] = []
+    test_results[f'weight_{asset}'] = []
+    test_results[f'close_{asset}'] = []
+
+previous_transaction_remainder_factor = 1.0
+
+while unseen_prices.shape[-1] > 0:
+
+    # At time t, at the start of Period t+1, we observe the price history up to and including time t.
+    price_history = seen_prices[:, :, -n_recent_periods:]
+    latest_close_prices = price_history[-1:, :, -1:]
+    normalized_price_history = price_history / latest_close_prices
+
+    previous_weights = current_portfolio_vector_memory[-1]
+
+    price_relative = 1 / normalized_price_history[-1, :, -2]
+    price_relative = np.insert(price_relative, 0, 1.0)
+
+    log_return_prime = np.log(previous_transaction_remainder_factor * (previous_weights @ price_relative))
 
     test_results['indices'].append(current_idx)
     test_results['datetimes'].append(all_datetimes[current_idx])
-    test_results['log_returns'].append(None)
-    test_results['relative_turnover'].append(None)
-    test_results['transaction_remainder_factor'].append(None)
-    for asset in assets:
-        test_results[f'weight_before_{asset}'].append(None)
+    test_results['log_returns'].append(log_return_prime)
 
-    while unseen_prices.shape[-1] > 0:
-        # At time t, at the start of Period t+1, we observe the price history up to and including time t.
-        price_history = seen_prices[:, :, -n_recent_periods:]
-        latest_close_prices = price_history[-1:, :, -1:]
-        normalized_price_history = price_history / latest_close_prices
+    # At time t, we choose the weights for the coming period, Period t+1
+    with torch.no_grad():
+        normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=device)
+        previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=device)
+        new_weights = policy(normalized_price_tensor, previous_weights_tensor)
+        new_weights = new_weights.squeeze(0).cpu().numpy()
 
-        previous_weights = current_portfolio_vector_memory[-1]
+    transaction_remainder_factor, weights_before_rebalancing = approximate_mu(
+        torch.from_numpy(previous_weights).unsqueeze(0), 
+        torch.from_numpy(price_relative).unsqueeze(0), 
+        torch.from_numpy(new_weights).unsqueeze(0), 
+        commission_rate,
+        train_mode=False, 
+        return_w_prime=True
+    )
+    transaction_remainder_factor = transaction_remainder_factor.item()
+    weights_before_rebalancing = weights_before_rebalancing.squeeze(0).numpy()
+    relative_turnover = (1 - transaction_remainder_factor) / commission_rate
 
-        # At time t, we choose the weights for the coming period, Period t+1
-        with torch.no_grad():
-            normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=device)
-            previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=device)
-            new_weights = policy(normalized_price_tensor, previous_weights_tensor)
-            new_weights = new_weights.squeeze(0).cpu().numpy()
-
-        for i, asset in enumerate(assets):
-            test_results[f'weight_{asset}'].append(new_weights[i+1])
-            test_results[f'close_{asset}'].append(latest_close_prices.squeeze()[i])
-
-        # We take a step forward to time t+1, and we observe the new (close) prices and compute the price relatives
-        current_idx += 1
-        new_close = unseen_prices[-1, :, 0]
-        previous_close = latest_close_prices.squeeze()
-        price_relative = np.concatenate([[1.0], new_close / previous_close])
-
-        # At time t+1, we compute THIS IS WRONG WRONG WRONG. IT SHOULD BE DONE A STEP BACK. SEE EQUATION 21, 22
-        transaction_remainder_factor, weights_before_rebalancing = approximate_mu(
-            torch.from_numpy(previous_weights).unsqueeze(0), 
-            torch.from_numpy(price_relative).unsqueeze(0), 
-            torch.from_numpy(new_weights).unsqueeze(0), 
-            commission_rate, 
-            return_w_prime=True
-        )
-        transaction_remainder_factor = transaction_remainder_factor.item()
-        weights_before_rebalancing = weights_before_rebalancing.squeeze(0).numpy()
-        log_return = np.log(transaction_remainder_factor * (price_relative @ previous_weights)) # this is the wrong log return
-        relative_turnover = (1 - transaction_remainder_factor) / commission_rate
-
-        test_results['indices'].append(current_idx)
-        test_results['datetimes'].append(all_datetimes[current_idx])
-        test_results['log_returns'].append(log_return)
-        test_results['relative_turnover'].append(relative_turnover)
-        test_results['transaction_remainder_factor'].append(transaction_remainder_factor)
-        for i, asset in enumerate(assets):
-            test_results[f'weight_before_{asset}'].append(weights_before_rebalancing[i+1])
-
-        current_portfolio_vector_memory = np.concatenate([current_portfolio_vector_memory, new_weights[np.newaxis, :]], axis=0)
-        seen_prices = np.concatenate([seen_prices, unseen_prices[:, :, :1]], axis=-1)
-        unseen_prices = unseen_prices[:, :, 1:]
-
+    test_results['relative_turnover'].append(relative_turnover)
+    test_results['transaction_remainder_factor'].append(transaction_remainder_factor)
     for i, asset in enumerate(assets):
-        test_results[f'weight_{asset}'].append(None)
-        test_results[f'close_{asset}'].append(new_close[i])
+        test_results[f'weight_before_{asset}'].append(weights_before_rebalancing[i+1])
+        test_results[f'weight_{asset}'].append(new_weights[i+1])
+        test_results[f'close_{asset}'].append(latest_close_prices.squeeze()[i])
 
-    return pd.DataFrame(test_results)
+    previous_transaction_remainder_factor = transaction_remainder_factor
+    current_portfolio_vector_memory = np.concatenate([current_portfolio_vector_memory, new_weights[np.newaxis, :]], axis=0)
 
-def calculate_performance_metrics(df_results, resolution_minutes):
-    """Calculate performance metrics from walk-forward test results."""
-    step_log_returns = df_results['log_returns'].dropna().values
-    step_returns = np.exp(step_log_returns) - 1
-    running_log_returns = np.cumsum(step_log_returns)
+    # take a step and observe new prices
+    current_idx += 1
+    seen_prices = np.concatenate([seen_prices, unseen_prices[:, :, :1]], axis=-1)
+    unseen_prices = unseen_prices[:, :, 1:]
 
-    apv_ratios = np.exp(running_log_returns)
-    portfolio_values = np.concatenate([[1.0], apv_ratios])
+df_results = pd.DataFrame(test_results)
 
-    running_max = np.maximum.accumulate(portfolio_values)
-    running_drawdown = (running_max - portfolio_values) / running_max
-    running_max_drawdown = np.maximum.accumulate(running_drawdown)
-
-    periodic_sharpe = np.mean(step_returns) / np.sqrt(np.var(step_returns, ddof=1))
-    annualized_sharpe = np.sqrt(365 * 24 * 60 / resolution_minutes) * periodic_sharpe
-
-    return {
-        'fAPV': apv_ratios[-1],
-        'SR': annualized_sharpe,
-        'MDD': running_max_drawdown[-1],
-        'apv_ratios': apv_ratios,
-        'portfolio_values': portfolio_values,
-        'running_drawdown': running_drawdown,
-        'running_max_drawdown': running_max_drawdown
-    }
+# %%
 
 
+# def calculate_performance_metrics(df_results, resolution_minutes):
+#     """Calculate performance metrics from walk-forward test results."""
+#     step_log_returns = df_results['log_returns'].dropna().values
+#     step_returns = np.exp(step_log_returns) - 1
+#     running_log_returns = np.cumsum(step_log_returns)
 
+#     apv_ratios = np.exp(running_log_returns)
+#     portfolio_values = np.concatenate([[1.0], apv_ratios])
+
+#     running_max = np.maximum.accumulate(portfolio_values)
+#     running_drawdown = (running_max - portfolio_values) / running_max
+#     running_max_drawdown = np.maximum.accumulate(running_drawdown)
+
+#     periodic_sharpe = np.mean(step_returns) / np.sqrt(np.var(step_returns, ddof=1))
+#     annualized_sharpe = np.sqrt(365 * 24 * 60 / resolution_minutes) * periodic_sharpe
+
+#     return {
+#         'fAPV': apv_ratios[-1],
+#         'SR': annualized_sharpe,
+#         'MDD': running_max_drawdown[-1],
+#         'apv_ratios': apv_ratios,
+#         'portfolio_values': portfolio_values,
+#         'running_drawdown': running_drawdown,
+#         'running_max_drawdown': running_max_drawdown
+#     }
+
+step_log_returns = df_results['log_returns'].values[1:]
+step_returns = np.exp(step_log_returns) - 1
+running_log_returns = np.cumsum(step_log_returns)
+
+
+
+
+
+
+
+# %%
 
 
 # Add performance metrics
