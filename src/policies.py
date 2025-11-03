@@ -37,7 +37,7 @@ class CNNPolicy(nn.Module):
 
         # inject previous non-cash portfolio weights as a feature map
         w_map = w_prev[:, 1:].unsqueeze(1).unsqueeze(-1) # (B, M) -> (B, 1, M, 1)
-        h2 = torch.cat([w_map, h2], dim=1)
+        h2 = torch.cat([w_map, h2], dim=1) # (B, 21, M, 1)
 
         scores = self.conv3(h2).squeeze(-1).squeeze(1) # (B, M) non-cash asset logits
         cash_score = self.cash_bias.expand(B, 1) # broadcast (1,) to (B, 1) without copying
@@ -46,6 +46,20 @@ class CNNPolicy(nn.Module):
 
         return weights
     
+class EqualWeightPolicy:
+    def __init__(self, n_non_cash_assets: int):
+        self.n_non_cash_assets = n_non_cash_assets
+
+    def __call__(self, price_history, previous_weights):
+        return torch.tensor([0] + [1 / self.n_non_cash_assets] * self.n_non_cash_assets, dtype=torch.float32).unsqueeze(0)
+
+class BuyAndHoldPolicy:
+    def __call__(self, price_history, previous_weights):
+        if previous_weights.dim() == 1:
+            previous_weights = previous_weights.unsqueeze(0)
+        return previous_weights
+
+# %%
 if __name__ == '__main__':
 
     policy = CNNPolicy(n_features=3, n_recent_periods=50)
