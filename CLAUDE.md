@@ -84,6 +84,13 @@
 * Consolidate similar operations under unified approaches
 * Document standards explicitly and apply uniformly
 
+## Refactoring Requirements
+* **PRECISE CODE COPYING** - When refactoring or moving code between files, copy it EXACTLY as-is
+* Preserve all spacing, newlines, blank lines, and comments from the original
+* Do NOT reformat, condense, or "improve" the code during refactoring
+* You may ADD docstrings or comments, but NEVER remove existing ones
+* Only modify the actual logic/behavior when explicitly requested
+
 ## CSV Data Safety Guidelines
 * **NEVER edit financial CSVs with spreadsheet software** (LibreOffice Calc, Excel) - they auto-convert decimals to percentages
 * **Use Python scripts for bulk row deletion/filtering** instead of manual editing:
