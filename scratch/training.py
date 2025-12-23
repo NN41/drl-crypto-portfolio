@@ -127,8 +127,8 @@ for epoch in range(n_epochs):
         validation_results = run_walk_forward_test(
             policy=policy,
             initial_portfolio_weights=initial_portfolio,
-            train_prices=train_prices,
-            test_prices=test_prices,
+            initial_prices=train_prices,
+            forward_prices=test_prices,
             all_datetimes=all_datetimes,
             assets=assets,
             n_recent_periods=n_recent_periods,
@@ -157,11 +157,19 @@ policy, optimizer, checkpoint = load_model('./models/pretrained/cnn_policy_20251
 
 # %%
 
+seen_prices_train = train_prices[:, :, -n_recent_periods:]
+unseen_prices_train = train_prices[:, :, :n_recent_periods]
+
+seen_prices_test = train_prices
+unseen_prices_test = test_prices
+
+# %%
+
 results_cnn_policy_no_osbl = run_walk_forward_test(
     policy=policy,
     initial_portfolio_weights=np.array([0, 0.5, 0.5]),
-    train_prices=train_prices,
-    test_prices=test_prices,
+    initial_prices=seen_prices_train,
+    forward_prices=unseen_prices_train,
     all_datetimes=all_datetimes,
     assets=assets,
     n_recent_periods=n_recent_periods,
@@ -174,24 +182,24 @@ results_cnn_policy_no_osbl = run_walk_forward_test(
 metrics_cnn_policy_no_osbl = calculate_performance_metrics(results_cnn_policy_no_osbl, RESOLUTION_MINUTES)
 print(f"CNN Policy: fAPV={metrics_cnn_policy_no_osbl['fAPV']:.4f}, SR={metrics_cnn_policy_no_osbl['SR']:.4f}, MDD={metrics_cnn_policy_no_osbl['MDD']:.4f}")
 
-# %%
-
-results_cnn_policy_with_osbl = run_walk_forward_test(
+results_cnn_policy_no_osbl = run_walk_forward_test(
     policy=policy,
     initial_portfolio_weights=np.array([0, 0.5, 0.5]),
-    train_prices=train_prices,
-    test_prices=test_prices,
+    initial_prices=seen_prices_test,
+    forward_prices=unseen_prices_test,
     all_datetimes=all_datetimes,
     assets=assets,
     n_recent_periods=n_recent_periods,
     commission_rate=commission_rate,
     device=device,
-    use_osbl=True,
-    n_osbl_update_steps=n_osbl_update_steps,
-    optimizer=optimizer,
+    use_osbl=False,
+    n_osbl_update_steps=None,
+    optimizer=None,
 )
-metrics_cnn_policy_with_osbl = calculate_performance_metrics(results_cnn_policy_with_osbl, RESOLUTION_MINUTES)
-print(f"CNN Policy: fAPV={metrics_cnn_policy_with_osbl['fAPV']:.4f}, SR={metrics_cnn_policy_with_osbl['SR']:.4f}, MDD={metrics_cnn_policy_with_osbl['MDD']:.4f}")
+metrics_cnn_policy_no_osbl = calculate_performance_metrics(results_cnn_policy_no_osbl, RESOLUTION_MINUTES)
+print(f"CNN Policy: fAPV={metrics_cnn_policy_no_osbl['fAPV']:.4f}, SR={metrics_cnn_policy_no_osbl['SR']:.4f}, MDD={metrics_cnn_policy_no_osbl['MDD']:.4f}")
+
+
 
 # %%
 
@@ -200,8 +208,27 @@ equal_weight_policy = EqualWeightPolicy(n_non_cash_assets=2)
 df_equal_weight = run_walk_forward_test(
     policy=equal_weight_policy,
     initial_portfolio_weights=np.array([0., 0.5, 0.5]),
-    train_prices=train_prices,
-    test_prices=test_prices,
+    initial_prices=seen_prices_train,
+    forward_prices=unseen_prices_train,
+    all_datetimes=all_datetimes,
+    assets=assets,
+    n_recent_periods=n_recent_periods,
+    commission_rate=commission_rate,
+    device=device,
+    use_osbl=False,
+    n_osbl_update_steps=None,
+    optimizer=None,
+)
+equal_weight_metrics = calculate_performance_metrics(df_equal_weight, RESOLUTION_MINUTES)
+print(f"Equal Weight: fAPV={equal_weight_metrics['fAPV']:.4f}, SR={equal_weight_metrics['SR']:.4f}, MDD={equal_weight_metrics['MDD']:.4f}")
+
+print("\nTesting Equal Weight Policy...")
+equal_weight_policy = EqualWeightPolicy(n_non_cash_assets=2)
+df_equal_weight = run_walk_forward_test(
+    policy=equal_weight_policy,
+    initial_portfolio_weights=np.array([0., 0.5, 0.5]),
+    initial_prices=seen_prices_test,
+    forward_prices=unseen_prices_test,
     all_datetimes=all_datetimes,
     assets=assets,
     n_recent_periods=n_recent_periods,
@@ -229,8 +256,8 @@ buy_hold_btc_policy = BuyAndHoldPolicy()
 df_buy_hold_btc = run_walk_forward_test(
     policy=buy_hold_btc_policy,
     initial_portfolio_weights=initial_portfolio_weights,
-    train_prices=train_prices,
-    test_prices=test_prices,
+    initial_prices=train_prices,
+    forward_prices=test_prices,
     all_datetimes=all_datetimes,
     assets=assets,
     n_recent_periods=n_recent_periods,
@@ -307,3 +334,19 @@ print(f"Buy-Hold BTC: fAPV={buy_hold_btc_metrics['fAPV']:.4f}, SR={buy_hold_btc_
 # print(f"\tEpoch avg log-return: {online_epoch_avg_log_return:.9f}")
 # writer.add_scalar('TrainOnline/AvgLogReturn', online_epoch_avg_log_return, online_epoch+1)
 
+results_cnn_policy_with_osbl = run_walk_forward_test(
+    policy=policy,
+    initial_portfolio_weights=np.array([0, 0.5, 0.5]),
+    initial_prices=train_prices,
+    forward_prices=test_prices,
+    all_datetimes=all_datetimes,
+    assets=assets,
+    n_recent_periods=n_recent_periods,
+    commission_rate=commission_rate,
+    device=device,
+    use_osbl=True,
+    n_osbl_update_steps=n_osbl_update_steps,
+    optimizer=optimizer,
+)
+metrics_cnn_policy_with_osbl = calculate_performance_metrics(results_cnn_policy_with_osbl, RESOLUTION_MINUTES)
+print(f"CNN Policy: fAPV={metrics_cnn_policy_with_osbl['fAPV']:.4f}, SR={metrics_cnn_policy_with_osbl['SR']:.4f}, MDD={metrics_cnn_policy_with_osbl['MDD']:.4f}")
