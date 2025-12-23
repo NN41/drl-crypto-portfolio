@@ -71,6 +71,8 @@ venv.bak/
 # Jupyter
 .ipynb_checkpoints
 
+.claude/settings.local.json
+
 # ===================================================================
 # Project-Specific Files
 # ===================================================================
