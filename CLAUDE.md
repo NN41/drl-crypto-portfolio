@@ -84,6 +84,13 @@
 * Consolidate similar operations under unified approaches
 * Document standards explicitly and apply uniformly
 
+## Plan Mode Guidelines
+* **Stay SUCCINCT** - Plans should be high-level overviews, not detailed specifications
+* **NO CODE in plans** - At most use pseudocode or brief conceptual examples
+* **Problem → Solution → Files** - State the issue, propose the fix, list affected files
+* **One page maximum** - If the plan is longer than one page, it's too detailed
+* **Bullet points preferred** - Use short, scannable bullet points over paragraphs
+
 ## Refactoring Requirements
 * **PRECISE CODE COPYING** - When refactoring or moving code between files, copy it EXACTLY as-is
 * Preserve all spacing, newlines, blank lines, and comments from the original

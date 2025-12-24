@@ -120,6 +120,14 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
         unseen_prices = unseen_prices[:, :, 1:]
 
     df_results = pd.DataFrame(test_results)
+
+    # Compute cash weights as 1 - sum of all non-cash asset weights
+    weight_cols = [f'weight_{asset}' for asset in assets]
+    df_results['weight_cash'] = 1 - df_results[weight_cols].sum(axis=1)
+
+    weight_before_cols = [f'weight_before_{asset}' for asset in assets]
+    df_results['weight_before_cash'] = 1 - df_results[weight_before_cols].sum(axis=1)
+
     return df_results
 
 
