@@ -71,7 +71,6 @@ test_prices = test_train_prices[:, :, -n_test_periods:]
 all_datetimes = df_btc['datetime'].values[-n_total_periods:] # datetimes synchronized with the close price of each period
 # %%
 
-all_datetimes[-n_test_periods:]
 
 # %%
 seed_everything(seed=42)
