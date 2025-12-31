@@ -3,7 +3,8 @@
 import os
 import numpy as np
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
+from pathlib import Path
 import torch
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -35,37 +36,69 @@ seed_everything(seed=42)
 # %%
 
 RESOLUTION_MINUTES = 30
+START_DATE = datetime(2023, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
+END_DATE = datetime(2025, 10, 15, 0, 30, 0, tzinfo=timezone.utc)
+START_TEST_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
 
-df_btc = pd.read_csv('./data/raw/ohlcv/BTC-PERPETUAL_resolution_30.csv').sort_values('timestamp')
-df_eth = pd.read_csv('./data/raw/ohlcv/ETH-PERPETUAL_resolution_30.csv').sort_values('timestamp')
+# 11-asset list from inspect_data.py REDUCED_LIST
+asset_symbols = [
+    'ADA_USDC-PERPETUAL',
+    'AVAX_USDC-PERPETUAL',
+    'BTC-PERPETUAL',
+    'BNB_USDC-PERPETUAL',
+    'DOGE_USDC-PERPETUAL',
+    'ETH-PERPETUAL',
+    'LINK_USDC-PERPETUAL',
+    'PAXG_USDC-PERPETUAL',
+    'SOL_USDC-PERPETUAL',
+    'TRUMP_USDC-PERPETUAL',
+    'XRP_USDC-PERPETUAL',
+]
+assets = [s.split('_')[0].split('-')[0].lower() for s in asset_symbols]
 
-df_btc['datetime'] = pd.to_datetime(df_btc['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
-df_eth['datetime'] = pd.to_datetime(df_eth['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
+features = ['high', 'low', 'close']
 
-# to start from the same timestamp
-start_dt = max(df_btc['datetime'].min(), df_eth['datetime'].min())
-df_btc = df_btc[df_btc['datetime'] >= start_dt].reset_index(drop=True).copy()
-df_eth = df_eth[df_eth['datetime'] >= start_dt].reset_index(drop=True).copy()
+# Load all asset data with datetime processing
+data_dir = Path('./data/raw/ohlcv')
+dfs = {}
+for symbol in asset_symbols:
+    csv_file = data_dir / f'{symbol}_resolution_30.csv'
+    df = pd.read_csv(csv_file).sort_values('timestamp')
+    df['datetime'] = pd.to_datetime(df['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
+    dfs[symbol] = df
 
-# %%
+# Forward-fill missing early data for each asset
+for symbol in asset_symbols:
+    df = dfs[symbol]
+    first_valid_close = df['close'].dropna().iloc[0]
 
-assets = ['btc', 'eth']
-features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym O-H-L-C
-n_test_periods = 2456
-# n_train_periods = 32504
-n_train_periods = len(df_btc) - n_test_periods
-n_total_periods = n_train_periods + n_test_periods
+    # Create continuous datetime index from START_DATE to END_DATE
+    date_range = pd.date_range(START_DATE, END_DATE, freq='30min', tz='UTC')
+    df_full = df.set_index('datetime').reindex(date_range)
 
-all_prices = np.stack([
-    df_btc[features].values,
-    df_eth[features].values
-]).transpose(2, 0, 1) # of shape (n_features, n_non_cash_assets, n_periods) as in paper
+    # Forward-fill OHLC with first available close for missing early data
+    missing_mask = df_full[features].isna().any(axis=1)
+    for col in features:
+        df_full.loc[missing_mask, col] = first_valid_close
+    df_full = df_full.reset_index().rename(columns={'index': 'datetime'})
+    dfs[symbol] = df_full
 
-test_train_prices = all_prices[:, :, -n_total_periods:]
-train_prices = test_train_prices[:, :, :n_train_periods]
-test_prices = test_train_prices[:, :, -n_test_periods:]
+# Verify all dataframes have same datetime index
+common_dates = dfs[asset_symbols[0]]['datetime'].values
+for symbol in asset_symbols[1:]:
+    assert np.array_equal(dfs[symbol]['datetime'].values, common_dates), f"Date mismatch for {symbol}"
 
-all_datetimes = df_btc['datetime'].values[-n_total_periods:] # datetimes synchronized with the close price of each period
+# Stack all assets into single array: shape (n_features, 11, n_periods) as in paper
+all_prices = np.stack([dfs[symbol][features].values for symbol in asset_symbols]).transpose(2, 0, 1)
+all_datetimes = common_dates
+
+# Calculate train/test split based on START_TEST_DATE
+split_idx = np.searchsorted(all_datetimes, pd.Timestamp(START_TEST_DATE).to_datetime64())
+n_train_periods = split_idx
+n_test_periods = len(all_datetimes) - n_train_periods
+
+train_prices = all_prices[:, :, :n_train_periods]
+test_prices = all_prices[:, :, n_train_periods:]
 
 
 # %%
@@ -73,6 +106,7 @@ all_datetimes = df_btc['datetime'].values[-n_total_periods:] # datetimes synchro
 learning_rate = 3e-5
 weight_decay = 1e-8
 n_features = train_prices.shape[0]
+n_non_cash_assets = train_prices.shape[1]
 
 policy, optimizer, checkpoint = load_model('./models/pretrained/cnn_policy_20251030_094203.pt', CNNPolicy, device, learning_rate, weight_decay)
 print(f"Loaded model trained for {checkpoint['n_epochs']} epochs")
@@ -80,9 +114,10 @@ print(f"Loaded model trained for {checkpoint['n_epochs']} epochs")
 # %%
 
 print("Evaluating CNN Policy without OSBL on test set...")
+initial_portfolio = np.ones(n_non_cash_assets + 1) / (n_non_cash_assets + 1)
 results_cnn_no_osbl = run_walk_forward_test(
     policy=policy,
-    initial_portfolio_weights=np.array([0, 0.5, 0.5]),
+    initial_portfolio_weights=initial_portfolio,
     initial_prices=train_prices,
     forward_prices=test_prices,
     all_datetimes=all_datetimes,
@@ -114,7 +149,7 @@ except FileNotFoundError:
     print("Evaluating CNN Policy with OSBL on test set...")
     results_cnn_with_osbl = run_walk_forward_test(
         policy=policy,
-        initial_portfolio_weights=np.array([0, 0.5, 0.5]),
+        initial_portfolio_weights=initial_portfolio,
         initial_prices=train_prices,
         forward_prices=test_prices,
         all_datetimes=all_datetimes,
@@ -134,10 +169,12 @@ metrics_cnn_with_osbl = calculate_performance_metrics(results_cnn_with_osbl, RES
 # %%
 
 print("Evaluating Equal Weight Policy on test set...")
-equal_weight_policy = EqualWeightPolicy(n_non_cash_assets=2)
+equal_weight_policy = EqualWeightPolicy(n_non_cash_assets=n_non_cash_assets)
+equal_weight_portfolio = np.zeros(n_non_cash_assets + 1)
+equal_weight_portfolio[1:] = 1.0 / n_non_cash_assets
 results_equal_weight = run_walk_forward_test(
     policy=equal_weight_policy,
-    initial_portfolio_weights=np.array([0., 0.5, 0.5]),
+    initial_portfolio_weights=equal_weight_portfolio,
     initial_prices=train_prices,
     forward_prices=test_prices,
     all_datetimes=all_datetimes,
@@ -150,14 +187,18 @@ results_equal_weight = run_walk_forward_test(
     optimizer=None,
 )
 metrics_equal_weight = calculate_performance_metrics(results_equal_weight, RESOLUTION_MINUTES)
+metrics_equal_weight
 
 # %%
 
-print("Evaluating Buy-and-Hold BTC Policy on test set...")
+print("Evaluating Buy-and-Hold Policy on test set...")
 buy_hold_btc_policy = BuyAndHoldPolicy()
+btc_idx = asset_symbols.index('BNB_USDC-PERPETUAL')
+btc_portfolio = np.zeros(n_non_cash_assets + 1)
+btc_portfolio[btc_idx + 1] = 1.0
 results_buy_hold_btc = run_walk_forward_test(
     policy=buy_hold_btc_policy,
-    initial_portfolio_weights=np.array([0, 1, 0]),
+    initial_portfolio_weights=btc_portfolio,
     initial_prices=train_prices,
     forward_prices=test_prices,
     all_datetimes=all_datetimes,
@@ -170,12 +211,18 @@ results_buy_hold_btc = run_walk_forward_test(
     optimizer=None,
 )
 metrics_buy_hold_btc = calculate_performance_metrics(results_buy_hold_btc, RESOLUTION_MINUTES)
+metrics_buy_hold_btc
+
+# %%
 
 print("Evaluating Buy-and-Hold ETH Policy on test set...")
 buy_hold_eth_policy = BuyAndHoldPolicy()
+eth_idx = asset_symbols.index('ETH-PERPETUAL')
+eth_portfolio = np.zeros(n_non_cash_assets + 1)
+eth_portfolio[eth_idx + 1] = 1.0
 results_buy_hold_eth = run_walk_forward_test(
     policy=buy_hold_eth_policy,
-    initial_portfolio_weights=np.array([0, 0, 1]),
+    initial_portfolio_weights=eth_portfolio,
     initial_prices=train_prices,
     forward_prices=test_prices,
     all_datetimes=all_datetimes,

@@ -19,7 +19,7 @@ def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, 
     Prepares a mini-batch of training data, consisting of a consecutive sequence of price histories, previous portfolio vectors and price relatives.
     In other words, for an action at time t, we have X_t and w_{t-1} and y_{t+1}
     '''
-    assert prices_array.shape[0] == portfolio_vector_memory.shape[-1], "Array of prices and portfolio vector memory must be of same size"
+    assert prices_array.shape[1] == portfolio_vector_memory.shape[-1] - 1, "Number of assets in prices must match portfolio (excluding cash)"
 
     batch_normalized_price_histories = []
     for action_idx in range(batch_start_idx, batch_start_idx+batch_size):

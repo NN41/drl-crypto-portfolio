@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 
 RESOLUTION_MINUTES = 30
 START_DATE = datetime(2023, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
+# START_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
 END_DATE = datetime(2025, 10, 15, 0, 30, 0, tzinfo=timezone.utc)
 
 # START_TEST_DATE = None  # Set to None to hide the train/test split line
