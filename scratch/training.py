@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import timedelta, datetime, timezone
+import time
 
 import torch
 import torch.nn as nn
@@ -20,10 +21,9 @@ from src.evaluation import run_walk_forward_test, calculate_performance_metrics
 from src.model_io import save_model, load_model
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
-n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio||
+n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
 batch_size = int(50 * 5.5) # x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
-geometric_parameter = 5e-5
 n_osbl_update_steps = 30
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -41,17 +41,22 @@ def seed_everything(seed=42):
 
 RESOLUTION_MINUTES = 30
 
+assets = ['btc', 'eth']
 df_btc = pd.read_csv('./data/raw/ohlcv/BTC-PERPETUAL_resolution_30.csv').sort_values('timestamp')
 df_eth = pd.read_csv('./data/raw/ohlcv/ETH-PERPETUAL_resolution_30.csv').sort_values('timestamp')
 
 df_btc['datetime'] = pd.to_datetime(df_btc['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
 df_eth['datetime'] = pd.to_datetime(df_eth['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
 
-assets = ['btc', 'eth']
+# to start from the same timestamp
+start_dt = max(df_btc['datetime'].min(), df_eth['datetime'].min())
+df_btc = df_btc[df_btc['datetime'] >= start_dt].reset_index(drop=True).copy()
+df_eth = df_eth[df_eth['datetime'] >= start_dt].reset_index(drop=True).copy()
+
 features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym O-H-L-C
-n_train_periods = 32504
-# n_validation_periods = 2456
 n_test_periods = 2456
+# n_train_periods = len(df_btc) - n_test_periods
+n_train_periods = 32504
 n_total_periods = n_train_periods + n_test_periods
 
 all_prices = np.stack([
@@ -64,19 +69,21 @@ train_prices = test_train_prices[:, :, :n_train_periods]
 test_prices = test_train_prices[:, :, -n_test_periods:]
 
 all_datetimes = df_btc['datetime'].values[-n_total_periods:] # datetimes synchronized with the close price of each period
-
 # %%
 
+all_datetimes[-n_test_periods:]
+
+# %%
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 3e-5 #1e-4 # as opposed to the paper's 3e-5
+learning_rate = 3e-5
 weight_decay = 1e-8
 n_epochs = 1000 # to match the total number of meaningful data points seen during training
 n_epochs_per_validation = 10
 n_batches_per_epoch = 2000
 n_total_updates = n_epochs * n_batches_per_epoch
-geometric_parameter = 5e-5
+geometric_parameter = 2e-5
 
 n_available_periods = train_prices.shape[-1]
 prices_array = train_prices
@@ -89,6 +96,7 @@ optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay
 
 run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
 writer = SummaryWriter(log_dir=f'runs/experiment_{run_timestamp}')
+training_start_time = time.time()
 for epoch in range(n_epochs):
     print(f"Epoch {epoch+1} / {n_epochs}")
 
@@ -144,6 +152,8 @@ for epoch in range(n_epochs):
         writer.add_scalar('Validation/Maximum_Drawdown', validation_metrics['MDD'], epoch+1)
         print(f"\tVALIDATION RESULTS: fAPV={validation_metrics['fAPV']:.4f}, SR={validation_metrics['SR']:.4f}, MDD={validation_metrics['MDD']:.4f}")
 
+training_elapsed = time.time() - training_start_time
+print(f"\nTraining completed in {training_elapsed/3600:.2f} hours ({training_elapsed/60:.1f} minutes)")
 writer.close()
 
 # %%

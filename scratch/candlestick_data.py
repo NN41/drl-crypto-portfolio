@@ -15,12 +15,12 @@ def unix_to_datetime(unix_timestamp_ms: int) -> datetime:
     """Converts a Unix timestamp (in ms) to a UTC-aware datetime object"""
     return datetime.fromtimestamp(unix_timestamp_ms / 1000, tz=timezone.utc)
 
-start_date = '2021-01-01'
+start_date = '2016-01-01'
 end_date = '2025-10-15'
 resolution = '30'
 instrument_name = 'BTC-PERPETUAL'
 
-# %%
+
 
 url = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
 
@@ -77,7 +77,6 @@ assert (time_diffs == expected_diff).all()
 
 df
 
-# %%
 
 output_dir = './data/raw/ohlcv'
 os.makedirs(output_dir, exist_ok=True)

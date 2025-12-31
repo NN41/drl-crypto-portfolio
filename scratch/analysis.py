@@ -42,11 +42,18 @@ df_eth = pd.read_csv('./data/raw/ohlcv/ETH-PERPETUAL_resolution_30.csv').sort_va
 df_btc['datetime'] = pd.to_datetime(df_btc['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
 df_eth['datetime'] = pd.to_datetime(df_eth['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
 
+# to start from the same timestamp
+start_dt = max(df_btc['datetime'].min(), df_eth['datetime'].min())
+df_btc = df_btc[df_btc['datetime'] >= start_dt].reset_index(drop=True).copy()
+df_eth = df_eth[df_eth['datetime'] >= start_dt].reset_index(drop=True).copy()
+
+# %%
+
 assets = ['btc', 'eth']
 features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym O-H-L-C
-n_train_periods = 32504
-# n_validation_periods = 2456
 n_test_periods = 2456
+# n_train_periods = 32504
+n_train_periods = len(df_btc) - n_test_periods
 n_total_periods = n_train_periods + n_test_periods
 
 all_prices = np.stack([
@@ -59,6 +66,7 @@ train_prices = test_train_prices[:, :, :n_train_periods]
 test_prices = test_train_prices[:, :, -n_test_periods:]
 
 all_datetimes = df_btc['datetime'].values[-n_total_periods:] # datetimes synchronized with the close price of each period
+
 
 # %%
 
