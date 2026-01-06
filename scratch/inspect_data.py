@@ -5,29 +5,30 @@ from datetime import timedelta, datetime, timezone
 from pathlib import Path
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import numpy as np
 
 RESOLUTION_MINUTES = 30
-START_DATE = datetime(2023, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
+START_DATE = datetime(2021, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 # START_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
-END_DATE = datetime(2025, 10, 15, 0, 30, 0, tzinfo=timezone.utc)
+END_DATE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 # START_TEST_DATE = None  # Set to None to hide the train/test split line
 START_TEST_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
 
-# REDUCED_LIST = None
-REDUCED_LIST = [
-    'ADA_USDC-PERPETUAL',
-    'AVAX_USDC-PERPETUAL',
-    'BTC-PERPETUAL',
-    'BNB_USDC-PERPETUAL',
-    'DOGE_USDC-PERPETUAL',
-    'ETH-PERPETUAL',
-    'LINK_USDC-PERPETUAL',
-    'PAXG_USDC-PERPETUAL',
-    'SOL_USDC-PERPETUAL',
-    'TRUMP_USDC-PERPETUAL',
-    'XRP_USDC-PERPETUAL'
-]
+REDUCED_LIST = None
+# REDUCED_LIST = [
+#     'ADA_USDC-PERPETUAL',
+#     'AVAX_USDC-PERPETUAL',
+#     'BTC-PERPETUAL',
+#     'BNB_USDC-PERPETUAL',
+#     'DOGE_USDC-PERPETUAL',
+#     'ETH-PERPETUAL',
+#     'LINK_USDC-PERPETUAL',
+#     'PAXG_USDC-PERPETUAL',
+#     'SOL_USDC-PERPETUAL',
+#     'TRUMP_USDC-PERPETUAL',
+#     'XRP_USDC-PERPETUAL'
+# ]
 
 
 # %%
@@ -54,7 +55,7 @@ import plotly.express as px
 colors = px.colors.qualitative.Plotly
 color_map = {name: colors[i % len(colors)] for i, name in enumerate(instruments.keys())}
 
-fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=('Normalized Close Prices', '30-Day Rolling Volume (Millions USD)'))
+fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=('Normalized Close Prices', '50-Period Moving Sum Log Returns', '30-Day Rolling Volume (Millions USD)'))
 
 for instrument_name, df in instruments.items():
     if REDUCED_LIST is not None and instrument_name not in REDUCED_LIST:
@@ -67,21 +68,22 @@ for instrument_name, df in instruments.items():
 
     if len(df_filtered) > 0:
         normalized = df_filtered['close'] / df_filtered['close'].iloc[0]
+        log_returns_50d = np.log(df_filtered['close'] / df_filtered['close'].shift(1)).rolling(window=50).sum()
         color = color_map[instrument_name]
         fig.add_trace(go.Scatter(x=df_filtered['datetime'], y=normalized, mode='lines', name=instrument_name, line=dict(width=2, color=color), legendgroup=instrument_name, showlegend=True), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df_filtered['datetime'], y=df_filtered['volume_30d'], mode='lines', name=instrument_name, line=dict(width=2, color=color), legendgroup=instrument_name, showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df_filtered['datetime'], y=log_returns_50d, mode='lines', name=instrument_name, line=dict(width=2, color=color), legendgroup=instrument_name, showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df_filtered['datetime'], y=df_filtered['volume_30d'], mode='lines', name=instrument_name, line=dict(width=2, color=color), legendgroup=instrument_name, showlegend=False), row=3, col=1)
 
 if START_TEST_DATE is not None:
     fig.add_vline(x=START_TEST_DATE, line_dash='dash', line_color='black', row='all')
-fig.update_layout(height=900, showlegend=True, hovermode='x unified')
-fig.update_xaxes(title_text='Date', row=2, col=1)
+fig.update_layout(height=1200, showlegend=True, hovermode='x unified')
+fig.update_xaxes(title_text='Date', row=3, col=1)
 fig.update_yaxes(title_text='Value Multiplier', row=1, col=1)
-fig.update_yaxes(title_text='Volume (Millions USD)', row=2, col=1)
+fig.update_yaxes(title_text='50-Period Log Return Sum', row=2, col=1)
+fig.update_yaxes(title_text='Volume (Millions USD)', row=3, col=1)
 fig.show()
 
 # %%
-
-import numpy as np
 
 stats = []
 for instrument_name, df in instruments.items():

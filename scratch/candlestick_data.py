@@ -16,11 +16,9 @@ def unix_to_datetime(unix_timestamp_ms: int) -> datetime:
     return datetime.fromtimestamp(unix_timestamp_ms / 1000, tz=timezone.utc)
 
 start_date = '2016-01-01'
-end_date = '2025-10-15'
+end_date = '2026-01-01'
 resolution = '30'
-instrument_name = 'BTC-PERPETUAL'
-
-
+instrument_name = 'MATIC_USDC-PERPETUAL'
 
 url = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
 
@@ -74,9 +72,6 @@ assert df['timestamp'].duplicated().sum() == 0
 time_diffs = df['timestamp'].diff().dropna()
 expected_diff = resolution_minutes * 60 * 1000
 assert (time_diffs == expected_diff).all()
-
-df
-
 
 output_dir = './data/raw/ohlcv'
 os.makedirs(output_dir, exist_ok=True)

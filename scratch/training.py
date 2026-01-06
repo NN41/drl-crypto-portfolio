@@ -14,7 +14,7 @@ from src.train_utils import geometrically_sample_batch_start_indices, run_one_ep
 from src.evaluation import run_walk_forward_test, calculate_performance_metrics
 from src.model_io import save_model
 
-commission_rate = 0.0005 # 0.0005 = 5 bips
+commission_rate = 1e-12 #0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
 batch_size = 50 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
@@ -34,7 +34,7 @@ def seed_everything(seed=42):
 # %%
 
 RESOLUTION_MINUTES = 30
-START_DATE = datetime(2023, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
+START_DATE = datetime(2021, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
 END_DATE = datetime(2025, 10, 15, 0, 30, 0, tzinfo=timezone.utc)
 START_TEST_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
 
@@ -102,15 +102,16 @@ test_prices = all_prices[:, :, n_train_periods:]
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 3e-5
+learning_rate = 1e-4
 weight_decay = 1e-8
-n_epochs = 1000
+n_epochs = 1000 * 2
 n_epochs_per_validation = 10
 n_batches_per_epoch = 2000
-geometric_parameter = 5e-5
+geometric_parameter = 2e-5 # instead of 5e-5
 
 n_available_periods = train_prices.shape[-1]
 prices_array = train_prices
+
 
 portfolio_vector_memory = np.ones((n_available_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
@@ -181,5 +182,6 @@ print(f"\nTraining completed in {training_elapsed/3600:.2f} hours ({training_ela
 writer.close()
 
 # %%
-save_model(policy, optimizer, save_dir='./models', n_epochs=n_epochs, commission_rate=commission_rate, learning_rate=learning_rate, weight_decay=weight_decay, n_features=n_features, n_recent_periods=n_recent_periods)
+save_model(policy, optimizer, save_dir='./models', filename=f'cnn_policy_{run_timestamp}.pt', n_epochs=n_epochs, commission_rate=commission_rate, learning_rate=learning_rate, weight_decay=weight_decay, n_features=n_features, n_recent_periods=n_recent_periods)
 
+# %%

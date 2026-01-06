@@ -76,6 +76,7 @@ class BuyAndHoldPolicy:
         return w_prev_drifted
 
 # %%
+
 if __name__ == '__main__':
 
     policy = CNNPolicy(n_features=3, n_recent_periods=50)
