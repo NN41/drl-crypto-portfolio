@@ -31,6 +31,7 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
 
+
 seed_everything(seed=42)
 
 # %%

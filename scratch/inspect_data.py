@@ -9,35 +9,45 @@ import numpy as np
 
 RESOLUTION_MINUTES = 30
 
-# Date ranges for train, validation, and test sets
-START_DATE_TRAIN = datetime(2021, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-START_DATE_VALIDATION = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-START_DATE_TEST = datetime(2025, 7, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-END_DATE_TEST = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+# Date ranges and split ratio
+START_DATE = datetime(2022, 4, 28, 0, 0, 0, tzinfo=timezone.utc)
+END_DATE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+SPLIT_RATIO = (14, 1, 1)  # Train, Validation, Test
+
+# Calculate split dates
+total_duration = END_DATE - START_DATE
+total_parts = sum(SPLIT_RATIO)
+resolution_seconds = RESOLUTION_MINUTES * 60
+
+START_DATE_TRAIN = START_DATE
+val_timestamp = (START_DATE + total_duration * SPLIT_RATIO[0] / total_parts).timestamp()
+START_DATE_VALIDATION = datetime.fromtimestamp(round(val_timestamp / resolution_seconds) * resolution_seconds, tz=timezone.utc)
+test_timestamp = (START_DATE_VALIDATION + total_duration * SPLIT_RATIO[1] / total_parts).timestamp()
+START_DATE_TEST = datetime.fromtimestamp(round(test_timestamp / resolution_seconds) * resolution_seconds, tz=timezone.utc)
+END_DATE_TEST = END_DATE
 
 # Report statistics for each set
-for name, start, end in [('Training', START_DATE_TRAIN, START_DATE_VALIDATION), ('Validation', START_DATE_VALIDATION, START_DATE_TEST), ('Test', START_DATE_TEST, END_DATE_TEST)]:
+for name, start, end in [('Training Set', START_DATE_TRAIN, START_DATE_VALIDATION), ('Validation Set', START_DATE_VALIDATION, START_DATE_TEST), ('Test Set', START_DATE_TEST, END_DATE_TEST)]:
     delta = end - start
     periods = int(delta.total_seconds() / (RESOLUTION_MINUTES * 60))
-    print(f"{name}: {periods:,} periods, {delta.days / 365:.1f} years, {delta.days / 365 * 12:.1f} months")
+    print(f"{name}:\t{start} to {end}")
+    print(f"\t\t{periods:,} periods, or {delta.days / 7:.1f} weeks, or {delta.days / 365 * 12:.1f} months")
 
 # %%
 
-
-
 REDUCED_LIST = None
 # REDUCED_LIST = [
+#     'BTC-PERPETUAL',
+#     'ETH-PERPETUAL',
+#     'SOL_USDC-PERPETUAL',
+#     'XRP_USDC-PERPETUAL',
+#     'DOGE_USDC-PERPETUAL',
+#     'PAXG_USDC-PERPETUAL',
 #     'ADA_USDC-PERPETUAL',
 #     'AVAX_USDC-PERPETUAL',
-#     'BTC-PERPETUAL',
+#     'DOT_USDC-PERPETUAL',
 #     'BNB_USDC-PERPETUAL',
-#     'DOGE_USDC-PERPETUAL',
-#     'ETH-PERPETUAL',
-#     'LINK_USDC-PERPETUAL',
-#     'PAXG_USDC-PERPETUAL',
-#     'SOL_USDC-PERPETUAL',
-#     'TRUMP_USDC-PERPETUAL',
-#     'XRP_USDC-PERPETUAL'
+#     'UNI_USDC-PERPETUAL',
 # ]
 
 
@@ -62,7 +72,7 @@ for csv_file in csv_files:
 # %%
 
 # Metric type: 'cumulative_return', 'cumulative_log_return'
-METRIC_TYPE = 'cumulative_return'
+METRIC_TYPE = 'cumulative_log_return'
 
 def calculate_metric(prices):
     if METRIC_TYPE == 'cumulative_return':
@@ -75,11 +85,22 @@ metric_titles = {'cumulative_return': 'Total Return', 'cumulative_log_return': '
 
 import plotly.express as px
 colors = px.colors.qualitative.Plotly
-color_map = {name: colors[i % len(colors)] for i, name in enumerate(instruments.keys())}
+
+# Sort instruments by 30-day volume at end of training set
+instrument_volumes = []
+for name, df in instruments.items():
+    df_train = df[(df['datetime'] >= START_DATE_TRAIN) & (df['datetime'] < START_DATE_VALIDATION)]
+    if len(df_train) > 0:
+        instrument_volumes.append((name, df_train['volume_30d'].iloc[-1]))
+instrument_volumes.sort(key=lambda x: x[1], reverse=True)
+sorted_instruments = [name for name, _ in instrument_volumes]
+
+color_map = {name: colors[i % len(colors)] for i, name in enumerate(sorted_instruments)}
 
 fig = make_subplots(rows=3, cols=1, shared_xaxes=False, vertical_spacing=0.05, subplot_titles=(f'Training Set - {metric_titles[METRIC_TYPE]}', f'Validation Set - {metric_titles[METRIC_TYPE]}', f'Test Set - {metric_titles[METRIC_TYPE]}'))
 
-for instrument_name, df in instruments.items():
+for instrument_name in sorted_instruments:
+    df = instruments[instrument_name]
     if REDUCED_LIST is not None and instrument_name not in REDUCED_LIST:
         continue
 
@@ -113,31 +134,49 @@ fig.show()
 
 # %%
 
+annualization_factor = (365 * 24 * 60 / RESOLUTION_MINUTES)
+
 stats = []
 for instrument_name, df in instruments.items():
     if REDUCED_LIST is not None and instrument_name not in REDUCED_LIST:
         continue
-    df_filtered = df.copy()
-    if START_DATE_TRAIN is not None:
-        df_filtered = df_filtered[df_filtered['datetime'] >= START_DATE_TRAIN]
-    if START_DATE_TEST is not None:
-        df_filtered = df_filtered[df_filtered['datetime'] < START_DATE_TEST]
 
-    if len(df_filtered) > 0:
-        normalized = df_filtered['close'] / df_filtered['close'].iloc[0]
-        daily_returns = df_filtered['close'].pct_change().dropna()
-        annualized_volatility = daily_returns.std() * np.sqrt(365)
+    df_train = df[(df['datetime'] >= START_DATE_TRAIN) & (df['datetime'] < START_DATE_VALIDATION)].copy()
+
+    if len(df_train) > 0:
+        time_delta = df_train['datetime'].iloc[-1] - df_train['datetime'].iloc[0]
+        years_in_data = time_delta.total_seconds() / (365 * 24 * 60 * 60)
+
+        prices = df_train['close'].values
+
+        period_log_returns = np.log(prices[1:] / prices[:-1])
+        avg_period_log_return = np.mean(period_log_returns)
+        total_log_return = np.log(prices[-1] / prices[0])
+        final_portfolio_value_multiplier = np.exp(total_log_return)
+
+        period_returns = prices[1:] / prices[:-1] - 1
+        risk_free_return = 0
+        periodic_sharpe_ratio = np.mean(period_returns - risk_free_return) / (np.sqrt(np.var(period_returns - risk_free_return, ddof=1)) + 1e-12)
+        annualized_sharpe_ratio = np.sqrt(annualization_factor) * periodic_sharpe_ratio
+
+        portfolio_values = np.exp(np.cumsum(period_log_returns))
+        running_max = np.maximum.accumulate(portfolio_values)
+        running_drawdown = (running_max - portfolio_values) / running_max
+        running_max_drawdown = np.maximum.accumulate(running_drawdown)
+        max_drawdown = running_max_drawdown[-1]
 
         stats.append({
             'Instrument': instrument_name,
-            'Volume at END (M USD)': round(df_filtered['volume_30d'].iloc[-1], 2),
-            'Min Normalized Price': round(normalized.min(), 2),
-            'Max Normalized Price': round(normalized.max(), 2),
-            'Annualized Volatility': round(annualized_volatility, 2),
-            'Final Normalized Price': round(normalized.iloc[-1], 2)
+            'Years loaded': round(years_in_data, 2),
+            'Final 30d Volume (M USD)': round(df_train['volume_30d'].iloc[-1], 2),
+            'Avg Period Log Return': round(avg_period_log_return, 6),
+            'Total Log Return': round(total_log_return, 2),
+            'Final APV': round(final_portfolio_value_multiplier, 2),
+            'Sharpe Ratio': round(annualized_sharpe_ratio, 1),
+            'Max Drawdown': round(max_drawdown, 2),
         })
 
-df_stats = pd.DataFrame(stats).sort_values('Volume at END (M USD)', ascending=False)
+df_stats = pd.DataFrame(stats).sort_values('Final 30d Volume (M USD)', ascending=False)
 print(df_stats.to_string(index=False))
 
 # %%
