@@ -85,6 +85,7 @@ runs/*
 # Trained model files
 models/*
 models_v2/*
+runs_v2/*
 
 # Data files
 data/*

@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 
 from src.policies import CNNPolicy, BuyAndHoldPolicy, EqualWeightPolicy
 from src.evaluation import run_walk_forward_test, calculate_performance_metrics
-from src.model_io import save_model, load_model
+from src.model_io import save_model, load_model, load_checkpoint
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio||

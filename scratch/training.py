@@ -1,18 +1,17 @@
 # %%
 
 import numpy as np
-import pandas as pd
-from datetime import timedelta, datetime, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 import time
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.policies import CNNPolicy
-from src.train_utils import geometrically_sample_batch_start_indices, uniformly_sample_batch_start_indices, run_one_epoch
+from src.train_utils import geometrically_sample_batch_start_indices, run_one_epoch
 from src.evaluation import run_walk_forward_test, calculate_performance_metrics
-from src.model_io import save_model
+from src.model_io import save_model, save_checkpoint, save_run_config
+from src.data_loading import load_and_split_data
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
@@ -34,80 +33,45 @@ def seed_everything(seed=42):
 # %%
 
 RESOLUTION_MINUTES = 30
-START_DATE = datetime(2021, 10, 17, 17, 0, 0, tzinfo=timezone.utc)
-END_DATE = datetime(2025, 10, 15, 0, 30, 0, tzinfo=timezone.utc)
-START_TEST_DATE = datetime(2025, 8, 24, 21, 0, 0, tzinfo=timezone.utc)
+
+START_DATE_TRAIN = datetime(2022, 4, 28, 0, 0, 0, tzinfo=timezone.utc)
+START_DATE_VALIDATION = datetime(2025, 7, 17, 0, 0, 0, tzinfo=timezone.utc)
+START_DATE_TEST = datetime(2025, 10, 9, 0, 0, 0, tzinfo=timezone.utc)
+END_DATE_TEST = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 # 11-asset list from inspect_data.py REDUCED_LIST
-asset_symbols = [
+instrument_names = [
+    'BTC-PERPETUAL',
+    'ETH-PERPETUAL',
+    'SOL_USDC-PERPETUAL',
+    'XRP_USDC-PERPETUAL',
+    'DOGE_USDC-PERPETUAL',
+    'PAXG_USDC-PERPETUAL',
     'ADA_USDC-PERPETUAL',
     'AVAX_USDC-PERPETUAL',
-    'BTC-PERPETUAL',
+    'DOT_USDC-PERPETUAL',
     'BNB_USDC-PERPETUAL',
-    'DOGE_USDC-PERPETUAL',
-    'ETH-PERPETUAL',
-    'LINK_USDC-PERPETUAL',
-    'PAXG_USDC-PERPETUAL',
-    'SOL_USDC-PERPETUAL',
-    'TRUMP_USDC-PERPETUAL',
-    'XRP_USDC-PERPETUAL',
+    'UNI_USDC-PERPETUAL',
 ]
-assets = [s.split('_')[0].split('-')[0].lower() for s in asset_symbols]
-
+assets = [s.split('_')[0].split('-')[0].lower() for s in instrument_names]
 features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym O-H-L-C
 
-# Load all asset data with datetime processing
-data_dir = Path('./data/raw/ohlcv')
-dfs = {}
-for symbol in asset_symbols:
-    csv_file = data_dir / f'{symbol}_resolution_30.csv'
-    df = pd.read_csv(csv_file).sort_values('timestamp')
-    df['datetime'] = pd.to_datetime(df['datetime'], utc=True) + timedelta(minutes=RESOLUTION_MINUTES)
-    dfs[symbol] = df
+train_prices, validation_prices, test_prices, n_train_periods, n_validation_periods, n_test_periods, all_datetimes = load_and_split_data(
+    instrument_names, features, START_DATE_TRAIN, START_DATE_VALIDATION, START_DATE_TEST, END_DATE_TEST, RESOLUTION_MINUTES
+)
 
-# Forward-fill missing early data for each asset
-for symbol in asset_symbols:
-    df = dfs[symbol]
-    first_valid_close = df['close'].dropna().iloc[0]
-
-    # Create continuous datetime index from START_DATE to END_DATE
-    date_range = pd.date_range(START_DATE, END_DATE, freq='30min', tz='UTC')
-    df_full = df.set_index('datetime').reindex(date_range)
-
-    # Forward-fill OHLC with first available close for missing early data
-    missing_mask = df_full[features].isna().any(axis=1)
-    for col in features:
-        df_full.loc[missing_mask, col] = first_valid_close
-    df_full = df_full.reset_index().rename(columns={'index': 'datetime'})
-    dfs[symbol] = df_full
-
-# Verify all dataframes have same datetime index
-common_dates = dfs[asset_symbols[0]]['datetime'].values
-for symbol in asset_symbols[1:]:
-    assert np.array_equal(dfs[symbol]['datetime'].values, common_dates), f"Date mismatch for {symbol}"
-
-# Stack all assets into single array: shape (n_features, 11, n_periods) as in paper
-all_prices = np.stack([dfs[symbol][features].values for symbol in asset_symbols]).transpose(2, 0, 1)
-all_datetimes = common_dates
-
-# Calculate train/test split based on START_TEST_DATE
-split_idx = np.searchsorted(all_datetimes, pd.Timestamp(START_TEST_DATE).to_datetime64())
-n_train_periods = split_idx # 32504
-n_test_periods = len(all_datetimes) - n_train_periods # 2456
-
-train_prices = all_prices[:, :, :n_train_periods]
-test_prices = all_prices[:, :, n_train_periods:]
+print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_periods, n_validation_periods, n_test_periods}")
 
 # %%
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 1e-4
+learning_rate = 3e-5
 weight_decay = 1e-8
-n_epochs = 1000 * 2
-n_epochs_per_validation = 10
-n_batches_per_epoch = 2000
-geometric_parameter = 2e-5 # instead of 5e-5
+n_epochs = 100
+n_epochs_per_validation = 50
+n_batches_per_epoch = 10
+geometric_parameter = 5e-5
 
 n_available_periods = train_prices.shape[-1]
 prices_array = train_prices
@@ -118,8 +82,42 @@ optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay
 
 # %%
 
-run_timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-writer = SummaryWriter(log_dir=f'runs/run_{run_timestamp}')
+run_timestamp = datetime.now(tz=timezone.utc).strftime("%y%m%d_%H%M%S")
+run_dir = f'./runs_v2/{run_timestamp}'
+checkpoint_dir = f'{run_dir}/checkpoints'
+
+# Save run configuration
+run_config = {
+    'commission_rate': commission_rate,
+    'n_recent_periods': n_recent_periods,
+    'batch_size': batch_size,
+    'n_online_batches': n_online_batches,
+    'n_osbl_update_steps': n_osbl_update_steps,
+    'learning_rate': learning_rate,
+    'weight_decay': weight_decay,
+    'n_epochs': n_epochs,
+    'n_epochs_per_validation': n_epochs_per_validation,
+    'n_batches_per_epoch': n_batches_per_epoch,
+    'geometric_parameter': geometric_parameter,
+    'n_features': n_features,
+    'n_non_cash_assets': n_non_cash_assets,
+    'n_train_periods': n_train_periods,
+    'n_validation_periods': n_validation_periods,
+    'n_test_periods': n_test_periods,
+    'RESOLUTION_MINUTES': RESOLUTION_MINUTES,
+    'START_DATE_TRAIN': START_DATE_TRAIN,
+    'START_DATE_VALIDATION': START_DATE_VALIDATION,
+    'START_DATE_TEST': START_DATE_TEST,
+    'END_DATE_TEST': END_DATE_TEST,
+    'instrument_names': instrument_names,
+    'features': features,
+}
+save_run_config(run_config, run_dir)
+
+save_checkpoint(policy, optimizer, 0, checkpoint_dir)
+print("Initial checkpoint saved (epoch 0, untrained model)")
+
+writer = SummaryWriter(log_dir=run_dir)
 training_start_time = time.time()
 for epoch in range(n_epochs):
     print(f"Epoch {epoch+1} / {n_epochs}")
@@ -153,14 +151,14 @@ for epoch in range(n_epochs):
             if param.grad is not None:
                 writer.add_histogram(f'Gradients/{name}', param.grad, epoch+1)
 
-    if epoch % n_epochs_per_validation == 0:
+    if (epoch + 1) % n_epochs_per_validation == 0:
         print(f"\tRunning validation...")
         initial_portfolio = np.array([1] * (n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
         validation_results = run_walk_forward_test(
             policy=policy,
             initial_portfolio_weights=initial_portfolio,
             initial_prices=train_prices,
-            forward_prices=test_prices,
+            forward_prices=validation_prices,
             all_datetimes=all_datetimes,
             assets=assets,
             n_recent_periods=n_recent_periods,
@@ -171,16 +169,18 @@ for epoch in range(n_epochs):
             optimizer=None,
         )
         validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES)
-        writer.add_scalar('Validation/Final_Accumulated_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)
+        writer.add_scalar('Validation/Final_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)
         writer.add_scalar('Validation/Annualized_Sharpe_Ratio', validation_metrics['SR'], epoch+1)
         writer.add_scalar('Validation/Maximum_Drawdown', validation_metrics['MDD'], epoch+1)
         print(f"\tVALIDATION RESULTS: fAPV={validation_metrics['fAPV']:.4f}, SR={validation_metrics['SR']:.4f}, MDD={validation_metrics['MDD']:.4f}")
+
+        save_checkpoint(policy, optimizer, epoch+1, checkpoint_dir)
+        print(f"\tCheckpoint saved at epoch {epoch+1}")
 
 training_elapsed = time.time() - training_start_time
 print(f"\nTraining completed in {training_elapsed/3600:.2f} hours ({training_elapsed/60:.1f} minutes)")
 writer.close()
 
-# %%
-save_model(policy, optimizer, save_dir='./models', filename=f'cnn_policy_{run_timestamp}.pt', n_epochs=n_epochs, commission_rate=commission_rate, learning_rate=learning_rate, weight_decay=weight_decay, n_features=n_features, n_recent_periods=n_recent_periods)
+save_model(policy, optimizer, save_dir=run_dir, filename='final_model.pt', n_epochs=n_epochs, commission_rate=commission_rate, learning_rate=learning_rate, weight_decay=weight_decay, n_features=n_features, n_recent_periods=n_recent_periods)
 
 # %%
