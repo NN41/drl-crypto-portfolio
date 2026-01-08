@@ -12,7 +12,10 @@ def geometrically_sample_batch_start_indices(n_samples, n_available_periods, bat
         potential_indices = max_batch_start_index - (geometric_sample - 1)
         valid_indices = potential_indices[potential_indices >= min_batch_start_index]
         chosen_indices.extend(valid_indices)
-    return np.array(chosen_indices[:n_samples])
+    chosen_indices = np.array(chosen_indices[:n_samples])
+    assert chosen_indices.min() >= min_batch_start_index, "Sampled batch start index is out of bounds"
+    assert chosen_indices.max() <= max_batch_start_index, "Sampled batch start index is out of bounds"
+    return chosen_indices
 
 def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
     '''

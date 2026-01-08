@@ -10,11 +10,11 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.policies import CNNPolicy
-from src.train_utils import geometrically_sample_batch_start_indices, run_one_epoch
+from src.train_utils import geometrically_sample_batch_start_indices, uniformly_sample_batch_start_indices, run_one_epoch
 from src.evaluation import run_walk_forward_test, calculate_performance_metrics
 from src.model_io import save_model
 
-commission_rate = 1e-12 #0.0005 # 0.0005 = 5 bips
+commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
 batch_size = 50 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
@@ -112,7 +112,6 @@ geometric_parameter = 2e-5 # instead of 5e-5
 n_available_periods = train_prices.shape[-1]
 prices_array = train_prices
 
-
 portfolio_vector_memory = np.ones((n_available_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -128,8 +127,8 @@ for epoch in range(n_epochs):
     batch_start_indices = geometrically_sample_batch_start_indices(
         n_samples=n_batches_per_epoch, 
         n_available_periods=n_available_periods, 
-        batch_size=batch_size, 
-        geometric_parameter=geometric_parameter, 
+        batch_size=batch_size,
+        geometric_parameter=geometric_parameter,
         n_recent_periods=n_recent_periods
     )
 

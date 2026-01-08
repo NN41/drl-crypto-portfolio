@@ -63,7 +63,7 @@ while current_end_timestamp > start_timestamp:
     current_end_timestamp = current_start_timestamp
 
 # OHLC at timestamp t covers [t, t+1), so the close of this interval and the open of the next interval should be roughly (if not exactly) equal
-# 'volume' is the traded volume over the interval in terms of base currency, while cost is in terms of quoted currency
+# 'volume' is the traded volume over the interval in terms of base currency, while 'cost' is in terms of quoted currency
 df = pd.concat(all_chunks[::-1], ignore_index=True)
 df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
 df = df.sort_values(by='timestamp').reset_index(drop=True).drop_duplicates()
