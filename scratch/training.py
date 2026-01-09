@@ -39,7 +39,6 @@ START_DATE_VALIDATION = datetime(2025, 7, 17, 0, 0, 0, tzinfo=timezone.utc)
 START_DATE_TEST = datetime(2025, 10, 9, 0, 0, 0, tzinfo=timezone.utc)
 END_DATE_TEST = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
-# 11-asset list from inspect_data.py REDUCED_LIST
 instrument_names = [
     'BTC-PERPETUAL',
     'ETH-PERPETUAL',
@@ -59,7 +58,6 @@ features = ['high', 'low', 'close'] # follow the standard order of the OHLC acro
 train_prices, validation_prices, test_prices, n_train_periods, n_validation_periods, n_test_periods, all_datetimes = load_and_split_data(
     instrument_names, features, START_DATE_TRAIN, START_DATE_VALIDATION, START_DATE_TEST, END_DATE_TEST, RESOLUTION_MINUTES
 )
-
 print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_periods, n_validation_periods, n_test_periods}")
 
 # %%
@@ -83,7 +81,7 @@ optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay
 # %%
 
 run_timestamp = datetime.now(tz=timezone.utc).strftime("%y%m%d_%H%M%S")
-run_dir = f'./runs_v2/{run_timestamp}'
+run_dir = f'./runs/{run_timestamp}'
 checkpoint_dir = f'{run_dir}/checkpoints'
 
 # Save run configuration
@@ -148,8 +146,7 @@ for epoch in range(n_epochs):
     if epoch % int(n_epochs * 0.1) == 0:
         for name, param in policy.named_parameters():
             writer.add_histogram(f'Weights/{name}', param, epoch+1)
-            if param.grad is not None:
-                writer.add_histogram(f'Gradients/{name}', param.grad, epoch+1)
+            writer.add_histogram(f'Gradients/{name}', param.grad, epoch+1)
 
     if (epoch + 1) % n_epochs_per_validation == 0:
         print(f"\tRunning validation...")

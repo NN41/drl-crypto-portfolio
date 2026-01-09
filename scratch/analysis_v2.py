@@ -14,7 +14,7 @@ from src.model_io import load_checkpoint
 
 # %%
 
-run_dir = './runs_v2/260108_174432'
+run_dir = './runs/260108_174432'
 config_path = f'{run_dir}/run_config.json'
 
 with open(config_path, 'r') as f:

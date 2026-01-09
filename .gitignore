@@ -71,21 +71,15 @@ venv.bak/
 # Jupyter
 .ipynb_checkpoints
 
-.claude/settings.local.json
+# Claude Code
+.claude/
 
 # ===================================================================
 # Project-Specific Files
 # ===================================================================
 # research papers
-docs/*
-
-# Generated TensorBoard logs
-runs/*
-
-# Trained model files
-models/*
-models_v2/*
-runs_v2/*
-
-# Data files
-data/*
+docs/
+runs/
+models/
+models_backup/
+data/
