@@ -78,7 +78,7 @@ validation_results = run_walk_forward_test(
     n_osbl_update_steps=None,
     optimizer=None,
 )
-validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES)
+validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES, commission_rate)
 print(f"VALIDATION RESULTS: fAPV={validation_metrics['fAPV']:.4f}, SR={validation_metrics['SR']:.4f}, MDD={validation_metrics['MDD']:.4f}")
 
 # %%

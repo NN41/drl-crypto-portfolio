@@ -130,7 +130,7 @@ results_cnn_no_osbl = run_walk_forward_test(
     n_osbl_update_steps=None,
     optimizer=None,
 )
-metrics_cnn_no_osbl = calculate_performance_metrics(results_cnn_no_osbl, RESOLUTION_MINUTES)
+metrics_cnn_no_osbl = calculate_performance_metrics(results_cnn_no_osbl, RESOLUTION_MINUTES, commission_rate)
 
 # %%
 
@@ -165,7 +165,7 @@ except FileNotFoundError:
     results_cnn_with_osbl.to_csv(results_path, index=False)
     print(f"Saved OSBL results to {results_path}")
 
-metrics_cnn_with_osbl = calculate_performance_metrics(results_cnn_with_osbl, RESOLUTION_MINUTES)
+metrics_cnn_with_osbl = calculate_performance_metrics(results_cnn_with_osbl, RESOLUTION_MINUTES, commission_rate)
 
 # %%
 
@@ -187,7 +187,7 @@ results_equal_weight = run_walk_forward_test(
     n_osbl_update_steps=None,
     optimizer=None,
 )
-metrics_equal_weight = calculate_performance_metrics(results_equal_weight, RESOLUTION_MINUTES)
+metrics_equal_weight = calculate_performance_metrics(results_equal_weight, RESOLUTION_MINUTES, commission_rate)
 metrics_equal_weight
 
 # %%
@@ -211,7 +211,7 @@ results_buy_hold_btc = run_walk_forward_test(
     n_osbl_update_steps=None,
     optimizer=None,
 )
-metrics_buy_hold_btc = calculate_performance_metrics(results_buy_hold_btc, RESOLUTION_MINUTES)
+metrics_buy_hold_btc = calculate_performance_metrics(results_buy_hold_btc, RESOLUTION_MINUTES, commission_rate)
 metrics_buy_hold_btc
 
 # %%
@@ -235,7 +235,7 @@ results_buy_hold_eth = run_walk_forward_test(
     n_osbl_update_steps=None,
     optimizer=None,
 )
-metrics_buy_hold_eth = calculate_performance_metrics(results_buy_hold_eth, RESOLUTION_MINUTES)
+metrics_buy_hold_eth = calculate_performance_metrics(results_buy_hold_eth, RESOLUTION_MINUTES, commission_rate)
 
 # %%
 

@@ -15,7 +15,7 @@ from src.data_loading import load_and_split_data
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
-batch_size = 50 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
+batch_size = 500 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
 n_osbl_update_steps = 30
 
@@ -64,12 +64,19 @@ print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_perio
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 3e-5 #* np.sqrt(10)
+learning_rate = 3e-5 * np.sqrt(10)
 weight_decay = 1e-8
-n_epochs = 100
-n_epochs_per_validation = 100
-n_batches_per_epoch = 1000
+n_epochs = 10000
+n_epochs_per_validation = 10
+n_batches_per_epoch = 200
 geometric_parameter = 5e-5
+
+
+total_update_steps = n_epochs * n_batches_per_epoch
+total_periods_visited = total_update_steps * batch_size
+print(f"Total number of parameter updates: {total_update_steps:,d}. \nTotal number of periods visited: {total_periods_visited:,d}. \nPeriods per epoch: {n_batches_per_epoch*batch_size:,d}")
+
+# %%
 
 n_available_periods = train_prices.shape[-1]
 prices_array = train_prices
@@ -86,29 +93,29 @@ checkpoint_dir = f'{run_dir}/checkpoints'
 
 # Save run configuration
 run_config = {
-    'commission_rate': commission_rate,
-    'n_recent_periods': n_recent_periods,
+    'n_epochs': n_epochs,
+    'n_batches_per_epoch': n_batches_per_epoch,
     'batch_size': batch_size,
-    'n_online_batches': n_online_batches,
-    'n_osbl_update_steps': n_osbl_update_steps,
     'learning_rate': learning_rate,
     'weight_decay': weight_decay,
-    'n_epochs': n_epochs,
-    'n_epochs_per_validation': n_epochs_per_validation,
-    'n_batches_per_epoch': n_batches_per_epoch,
+    'n_recent_periods': n_recent_periods,
     'geometric_parameter': geometric_parameter,
-    'n_features': n_features,
-    'n_non_cash_assets': n_non_cash_assets,
-    'n_train_periods': n_train_periods,
-    'n_validation_periods': n_validation_periods,
-    'n_test_periods': n_test_periods,
+    'n_online_batches': n_online_batches,
+    'n_osbl_update_steps': n_osbl_update_steps,
     'RESOLUTION_MINUTES': RESOLUTION_MINUTES,
     'START_DATE_TRAIN': START_DATE_TRAIN,
     'START_DATE_VALIDATION': START_DATE_VALIDATION,
     'START_DATE_TEST': START_DATE_TEST,
     'END_DATE_TEST': END_DATE_TEST,
+    'n_train_periods': n_train_periods,
+    'n_validation_periods': n_validation_periods,
+    'n_test_periods': n_test_periods,
     'instrument_names': instrument_names,
+    'n_non_cash_assets': n_non_cash_assets,
     'features': features,
+    'n_features': n_features,
+    'commission_rate': commission_rate,
+    'n_epochs_per_validation': n_epochs_per_validation,
 }
 save_run_config(run_config, run_dir)
 
@@ -172,7 +179,7 @@ for epoch in range(n_epochs):
             n_osbl_update_steps=None,
             optimizer=None,
         )
-        validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES)
+        validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES, commission_rate)
         writer.add_scalar('Validation/Final_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)
         writer.add_scalar('Validation/Annualized_Sharpe_Ratio', validation_metrics['SR'], epoch+1)
         writer.add_scalar('Validation/Maximum_Drawdown', validation_metrics['MDD'], epoch+1)
@@ -189,74 +196,3 @@ save_model(policy, optimizer, save_dir=run_dir, filename='final_model.pt', n_epo
 
 
 # %%
-
-
-initial_portfolio = np.array([1] * (n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
-initial_portfolio = np.insert(np.zeros(n_non_cash_assets), 0, 1)
-validation_results = run_walk_forward_test(
-    policy=policy,
-    initial_portfolio_weights=initial_portfolio,
-    initial_prices=train_prices,
-    forward_prices=validation_prices,
-    all_datetimes=all_datetimes,
-    assets=assets,
-    n_recent_periods=n_recent_periods,
-    commission_rate=commission_rate,
-    device=device,
-    use_osbl=False,
-    n_osbl_update_steps=None,
-    optimizer=None,
-)
-validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES)
-
-# %%
-
-df_results = validation_results
-
-df_results
-resolution_minutes = 30
-
-# %%
-
-initial_portfolio_value = 1
-risk_free_return = 0
-
-# Note that all metrics are measured BEFORE rebalancing occurs
-step_log_returns = df_results['log_returns'].values
-avg_log_return = np.mean(step_log_returns)
-step_returns = np.exp(step_log_returns) - 1
-step_portfolio_value_multipliers = np.exp(step_log_returns)
-apv_ratios = np.cumprod(step_portfolio_value_multipliers)
-assert np.sum(np.abs(apv_ratios - np.exp(np.cumsum(step_log_returns)))) < 1e-9, "Large deviation between equivalent calculations of apv ratios"
-
-transaction_remainder_factors = df_results['transaction_remainder_factor'].values
-portfolio_values_before_rebalancing = initial_portfolio_value * apv_ratios
-transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors) # in terms of the initial portfolio value
-turnovers = transaction_costs / commission_rate
-
-running_transaction_costs = np.cumsum(transaction_costs)
-running_turnover = running_transaction_costs / commission_rate
-
-running_max = np.maximum.accumulate(portfolio_values_before_rebalancing)
-running_drawdown = (running_max - portfolio_values_before_rebalancing) / running_max
-running_max_drawdown = np.maximum.accumulate(running_drawdown)
-
-
-periodic_sharpe_ratio = np.mean(step_returns - risk_free_return) / (np.sqrt(np.var(step_returns - risk_free_return, ddof=1)) + 1e-12)
-annualized_sharpe_ratio = np.sqrt(365 * 24 * 60 / resolution_minutes) * periodic_sharpe_ratio
-
-{
-    'fAPV': portfolio_values_before_rebalancing[-1],
-    'SR': annualized_sharpe_ratio,
-    'MDD': running_max_drawdown[-1],
-    'avg_log_return': avg_log_return,
-    'total_transaction_costs': running_transaction_costs[-1],
-    'total_turnover': running_turnover[-1],
-    'apv_ratios': apv_ratios,
-    'running_drawdown': running_drawdown,
-    'running_max_drawdown': running_max_drawdown,
-    'step_log_returns': step_log_returns,
-    'step_returns': step_returns,
-    'running_transaction_costs': running_transaction_costs,
-    'running_turnover': running_turnover
-}

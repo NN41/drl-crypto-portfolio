@@ -72,7 +72,7 @@ for csv_file in csv_files:
 # %%
 
 # Metric type: 'cumulative_return', 'cumulative_log_return'
-METRIC_TYPE = 'cumulative_log_return'
+METRIC_TYPE = 'cumulative_return'
 
 def calculate_metric(prices):
     if METRIC_TYPE == 'cumulative_return':

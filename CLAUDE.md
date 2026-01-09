@@ -94,9 +94,14 @@
 ## Refactoring Requirements
 * **PRECISE CODE COPYING** - When refactoring or moving code between files, copy it EXACTLY as-is
 * Preserve all spacing, newlines, blank lines, and comments from the original
+* Preserve the exact variable names the user chose - do NOT rename variables
+* Preserve all assertions, even if they seem redundant
+* Preserve unused variables - the user may have a reason for them
 * Do NOT reformat, condense, or "improve" the code during refactoring
-* You may ADD docstrings or comments, but NEVER remove existing ones
+* Do NOT reorder statements or variable declarations
+* You may ADD docstrings or function signature changes (parameters), but NEVER modify the function body logic
 * Only modify the actual logic/behavior when explicitly requested
+* If you notice issues (unused vars, inefficient code, etc.), mention them but do NOT fix them unless asked
 
 ## CSV Data Safety Guidelines
 * **NEVER edit financial CSVs with spreadsheet software** (LibreOffice Calc, Excel) - they auto-convert decimals to percentages

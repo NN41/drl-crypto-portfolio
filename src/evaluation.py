@@ -129,31 +129,57 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
     df_results['weight_before_cash'] = 1 - df_results[weight_before_cols].sum(axis=1)
     df_results['start_of_period'] = df_results.index.values + 1
 
-    return df_results, weights_before_rebalancing, new_weights
+    return df_results
 
 
-def calculate_performance_metrics(df_results, resolution_minutes=30):
+def calculate_performance_metrics(df_results, resolution_minutes=30, commission_rate=0.0005):
+    """
+    Calculate performance metrics from walk-forward test results.
+
+    Args:
+        df_results: DataFrame with 'log_returns' and 'transaction_remainder_factor' columns
+        resolution_minutes: Time resolution in minutes (default 30)
+        commission_rate: Commission rate for turnover calculation (default 0.0005)
+    """
+    initial_portfolio_value = 1
+    risk_free_return = 0
+
+    # Note that all metrics are measured BEFORE rebalancing occurs
     step_log_returns = df_results['log_returns'].values
+    avg_log_return = np.mean(step_log_returns)
     step_returns = np.exp(step_log_returns) - 1
-    running_log_returns = np.cumsum(step_log_returns)
+    step_portfolio_value_multipliers = np.exp(step_log_returns)
+    apv_ratios = np.cumprod(step_portfolio_value_multipliers)
+    assert np.sum(np.abs(apv_ratios - np.exp(np.cumsum(step_log_returns)))) < 1e-9, "Large deviation between equivalent calculations of apv ratios"
 
-    apv_ratios = np.exp(running_log_returns)
-    portfolio_values = apv_ratios
+    transaction_remainder_factors = df_results['transaction_remainder_factor'].values
+    portfolio_values_before_rebalancing = initial_portfolio_value * apv_ratios
+    transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors) # in terms of the initial portfolio value
+    turnovers = transaction_costs / commission_rate
 
-    running_max = np.maximum.accumulate(portfolio_values)
-    running_drawdown = (running_max - portfolio_values) / running_max
+    running_transaction_costs = np.cumsum(transaction_costs)
+    running_turnover = running_transaction_costs / commission_rate
+
+    running_max = np.maximum.accumulate(portfolio_values_before_rebalancing)
+    running_drawdown = (running_max - portfolio_values_before_rebalancing) / running_max
     running_max_drawdown = np.maximum.accumulate(running_drawdown)
 
-    risk_free_return = 0
+
     periodic_sharpe_ratio = np.mean(step_returns - risk_free_return) / (np.sqrt(np.var(step_returns - risk_free_return, ddof=1)) + 1e-12)
     annualized_sharpe_ratio = np.sqrt(365 * 24 * 60 / resolution_minutes) * periodic_sharpe_ratio
 
     return {
-        'fAPV': apv_ratios[-1],
+        'fAPV': portfolio_values_before_rebalancing[-1],
         'SR': annualized_sharpe_ratio,
         'MDD': running_max_drawdown[-1],
+        'avg_log_return': avg_log_return,
+        'total_transaction_costs': running_transaction_costs[-1],
+        'total_turnover': running_turnover[-1],
         'apv_ratios': apv_ratios,
-        'portfolio_values': portfolio_values,
         'running_drawdown': running_drawdown,
-        'running_max_drawdown': running_max_drawdown
+        'running_max_drawdown': running_max_drawdown,
+        'step_log_returns': step_log_returns,
+        'step_returns': step_returns,
+        'running_transaction_costs': running_transaction_costs,
+        'running_turnover': running_turnover
     }
