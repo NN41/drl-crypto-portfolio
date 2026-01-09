@@ -57,6 +57,17 @@ def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, 
     }
 
 def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, commission_rate):
+    '''
+    At time t, the agent chooses w_t based on X_t and w_{t-1}, which must be rewarded based on the price-relative vector y_{t+1}.
+
+    The paper suggests using the log-return r_{t+1} as a reward, which depends on p_{t+1}. This is the portfolio value after rebalancing
+    once more at time t+1. In other words, in order to reward action w_t, we discard mu_t and instead need to take another action w_{t+1}.
+    As such, the signal the agent receives about rebalancing costs are not directly linked to w_t. This is very inefficient.
+
+    We instead use the reward r'_{t+1} = ln(p'_{t+1}/p'_t). This depends on the portfolio values BEFORE rebalancing. This way, the reward
+    for action w_t actually depends on mu_t, linking w_t directly to both the quality of investments (through y_{t+1}) as well as the
+    effect on transaction costs through mu_t. This way it learns to balance expected returns and costs.  
+    '''
 
     batch_normalized_price_histories = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
     batch_previous_weights = torch.from_numpy(batch['previous_weights']).float().to(device)

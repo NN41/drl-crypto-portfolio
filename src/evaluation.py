@@ -24,8 +24,8 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
     current_portfolio_vector_memory[-1] = initial_portfolio_weights
 
     test_results = {
-        'log_returns': [],
         'datetimes': [],
+        'log_returns': [],
         'indices': [],
         'relative_turnover': [],
         'transaction_remainder_factor': [],
@@ -127,8 +127,9 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
 
     weight_before_cols = [f'weight_before_{asset}' for asset in assets]
     df_results['weight_before_cash'] = 1 - df_results[weight_before_cols].sum(axis=1)
+    df_results['start_of_period'] = df_results.index.values + 1
 
-    return df_results
+    return df_results, weights_before_rebalancing, new_weights
 
 
 def calculate_performance_metrics(df_results, resolution_minutes=30):
@@ -156,46 +157,3 @@ def calculate_performance_metrics(df_results, resolution_minutes=30):
         'running_drawdown': running_drawdown,
         'running_max_drawdown': running_max_drawdown
     }
-
-if __name__ == '__main__':
-    from datetime import datetime, timezone
-    from src.policies import EqualWeightPolicy
-
-    np.random.seed(42)
-    n_features, n_assets, n_periods = 3, 2, 200
-    prices = np.random.rand(n_features, n_assets, n_periods) * 100 + 100
-
-    initial_prices = prices[:, :, :100]
-    forward_prices = prices[:, :, 100:]
-
-    start_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    datetimes = pd.date_range(start=start_time, periods=n_periods, freq='30min').values
-
-    policy = EqualWeightPolicy(n_non_cash_assets=n_assets)
-    device = torch.device('cpu')
-
-    print("Running baseline walk-forward test...")
-    results = run_walk_forward_test(
-        policy=policy,
-        initial_portfolio_weights=np.array([0, 0.5, 0.5]),
-        initial_prices=initial_prices,
-        forward_prices=forward_prices,
-        all_datetimes=datetimes,
-        assets=['asset0', 'asset1'],
-        n_recent_periods=10,
-        commission_rate=0.0005,
-        device=device,
-        use_osbl=False,
-        n_osbl_update_steps=None,
-        optimizer=None
-    )
-    metrics = calculate_performance_metrics(results, resolution_minutes=30)
-
-    print(f"Shape: {results.shape}")
-    print(f"Periods: {len(results)}")
-    print(f"fAPV: {metrics['fAPV']:.6f}")
-    print(f"SR: {metrics['SR']:.6f}")
-    print(f"MDD: {metrics['MDD']:.6f}")
-    print(f"Mean turnover: {results['relative_turnover'].mean():.6f}")
-
-# %%
