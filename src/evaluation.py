@@ -124,11 +124,24 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
     # Compute cash weights as 1 - sum of all non-cash asset weights
     weight_cols = [f'weight_{asset}' for asset in assets]
     df_results['weight_cash'] = 1 - df_results[weight_cols].sum(axis=1)
-
+    
     weight_before_cols = [f'weight_before_{asset}' for asset in assets]
     df_results['weight_before_cash'] = 1 - df_results[weight_before_cols].sum(axis=1)
     df_results['start_of_period'] = df_results.index.values + 1
 
+    all_weight_cols = ['weight_cash'] + weight_cols
+    all_weights = df_results[all_weight_cols]
+    # epsilon = 1e-9
+    # entropy = (-1) * np.sum(all_weights * np.log(all_weights + epsilon), axis=1)
+    # max_entropy = np.log(len(all_weights.columns))
+    # df_results['normalized_entropy'] = entropy / max_entropy
+
+    all_weights_clipped = np.clip(all_weights, 0, 1)
+    epsilon = 1e-9
+    entropy = (-1) * np.sum(all_weights_clipped * np.log(all_weights_clipped + epsilon), axis=1)
+    max_entropy = np.log(len(all_weights.columns))
+    df_results['normalized_entropy'] = entropy / max_entropy
+    
     return df_results
 
 
@@ -136,10 +149,9 @@ def calculate_performance_metrics(df_results, resolution_minutes=30, commission_
     """
     Calculate performance metrics from walk-forward test results.
 
-    Args:
-        df_results: DataFrame with 'log_returns' and 'transaction_remainder_factor' columns
-        resolution_minutes: Time resolution in minutes (default 30)
-        commission_rate: Commission rate for turnover calculation (default 0.0005)
+    The turnover is the traded volume (buying AND selling) and as such has a value between and 2.
+    The "(absolute) turnover" is in terms of dollars (i.e. the initial portfolio value),
+    while the "relative turnover" is in terms of the portfolio value before rebalancing, which is useful if the portfolio value changes significantly over time.
     """
     initial_portfolio_value = 1
     risk_free_return = 0
@@ -154,8 +166,9 @@ def calculate_performance_metrics(df_results, resolution_minutes=30, commission_
 
     transaction_remainder_factors = df_results['transaction_remainder_factor'].values
     portfolio_values_before_rebalancing = initial_portfolio_value * apv_ratios
-    transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors) # in terms of the initial portfolio value
-    turnovers = transaction_costs / commission_rate
+    transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors)
+
+    relative_step_turnovers = (1 - transaction_remainder_factors) / commission_rate
 
     running_transaction_costs = np.cumsum(transaction_costs)
     running_turnover = running_transaction_costs / commission_rate
@@ -164,15 +177,20 @@ def calculate_performance_metrics(df_results, resolution_minutes=30, commission_
     running_drawdown = (running_max - portfolio_values_before_rebalancing) / running_max
     running_max_drawdown = np.maximum.accumulate(running_drawdown)
 
-
     periodic_sharpe_ratio = np.mean(step_returns - risk_free_return) / (np.sqrt(np.var(step_returns - risk_free_return, ddof=1)) + 1e-12)
     annualized_sharpe_ratio = np.sqrt(365 * 24 * 60 / resolution_minutes) * periodic_sharpe_ratio
+
+    avg_normalized_entropy = df_results['normalized_entropy'].mean()
 
     return {
         'fAPV': portfolio_values_before_rebalancing[-1],
         'SR': annualized_sharpe_ratio,
         'MDD': running_max_drawdown[-1],
+        'avg_normalized_entropy': avg_normalized_entropy,
+        'avg_transaction_cost': transaction_costs.mean(),
+        'avg_relative_turnover': relative_step_turnovers.mean(),
         'avg_log_return': avg_log_return,
+        'avg_cash_weight': df_results['weight_cash'].mean(),
         'total_transaction_costs': running_transaction_costs[-1],
         'total_turnover': running_turnover[-1],
         'apv_ratios': apv_ratios,
@@ -181,5 +199,8 @@ def calculate_performance_metrics(df_results, resolution_minutes=30, commission_
         'step_log_returns': step_log_returns,
         'step_returns': step_returns,
         'running_transaction_costs': running_transaction_costs,
-        'running_turnover': running_turnover
+        'running_turnover': running_turnover,
     }
+
+
+# %%

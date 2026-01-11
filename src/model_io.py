@@ -19,7 +19,7 @@ def save_model(policy, optimizer, save_dir='./models', filename=None, **metadata
 
 def load_model(model_path, policy_class, device, default_learning_rate=1e-4, default_weight_decay=1e-8):
     """Load model and optimizer from checkpoint."""
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     policy = policy_class(n_features=checkpoint['n_features'], n_recent_periods=checkpoint['n_recent_periods']).to(device)
     policy.load_state_dict(checkpoint['model_state_dict'])
     learning_rate = checkpoint.get('learning_rate', default_learning_rate)
@@ -47,14 +47,10 @@ def save_checkpoint(policy, optimizer, epoch, checkpoint_dir):
     return checkpoint_path
 
 def load_checkpoint(checkpoint_path, policy, optimizer, device):
-    """Load checkpoint and restore training state (model, optimizer, RNG states)."""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    """Load checkpoint and restore training state (model, optimizer)."""
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     policy.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    np.random.set_state(checkpoint['rng_state_numpy'])
-    torch.set_rng_state(checkpoint['rng_state_torch'])
-    if checkpoint['rng_state_torch_cuda'] is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(checkpoint['rng_state_torch_cuda'])
     epoch = checkpoint['epoch']
     print(f"Loaded checkpoint from {checkpoint_path} (epoch {epoch})")
     return epoch

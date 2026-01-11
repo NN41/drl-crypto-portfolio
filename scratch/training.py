@@ -15,7 +15,7 @@ from src.data_loading import load_and_split_data
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
-batch_size = 500 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
+batch_size = 512 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
 n_osbl_update_steps = 30
 
@@ -64,11 +64,11 @@ print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_perio
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 3e-5 * np.sqrt(10)
+learning_rate = 3e-5
 weight_decay = 1e-8
 n_epochs = 10000
 n_epochs_per_validation = 10
-n_batches_per_epoch = 200
+n_batches_per_epoch = 50
 geometric_parameter = 5e-5
 
 
@@ -157,10 +157,16 @@ for epoch in range(n_epochs):
     writer.add_scalar('Train/Avg_Abs_PVM_Change', avg_abs_pvm_change, epoch+1)
     writer.add_scalar('Model_CashBias/Value', policy.cash_bias.item(), epoch+1)
     writer.add_scalar('Model_CashBias/Gradient', policy.cash_bias.grad, epoch+1)
-    if epoch % int(n_epochs * 0.1) == 0:
-        for name, param in policy.named_parameters():
-            writer.add_histogram(f'Model_Parameters/{name}', param, epoch+1)
-            writer.add_histogram(f'Model_Gradients/{name}', param.grad, epoch+1)
+
+    # Compute L2 norms for each parameter and gradient individually
+    total_param_l2 = sum(torch.norm(p).item()**2 for p in policy.parameters())**0.5
+    total_grad_l2 = sum(torch.norm(p.grad).item()**2 for p in policy.parameters() if p.grad is not None)**0.5
+    writer.add_scalar('Model_Param_Norms/_Total_L2', total_param_l2, epoch+1)
+    writer.add_scalar('Model_Grad_Norms/_Total_L2', total_grad_l2, epoch+1)
+    for name, param in policy.named_parameters():
+        writer.add_scalar(f'Model_Param_Norms/{name}_L2', torch.norm(param).item(), epoch+1)
+        if param.grad is not None:
+            writer.add_scalar(f'Model_Grad_Norms/{name}_L2', torch.norm(param.grad).item(), epoch+1)
 
     if (epoch + 1) % n_epochs_per_validation == 0:
         print(f"\tRunning validation...")
@@ -183,7 +189,21 @@ for epoch in range(n_epochs):
         writer.add_scalar('Validation/Final_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)
         writer.add_scalar('Validation/Annualized_Sharpe_Ratio', validation_metrics['SR'], epoch+1)
         writer.add_scalar('Validation/Maximum_Drawdown', validation_metrics['MDD'], epoch+1)
-        print(f"\tVALIDATION RESULTS: fAPV={validation_metrics['fAPV']:.4f}, SR={validation_metrics['SR']:.4f}, MDD={validation_metrics['MDD']:.4f}")
+        writer.add_scalar('Validation/Total_Transaction_Costs', validation_metrics['total_transaction_costs'], epoch+1)
+        writer.add_scalar('Validation/Total_Turnover', validation_metrics['total_turnover'], epoch+1)
+        writer.add_scalar('Validation_Detailed/Avg_Log_Return', validation_metrics['avg_log_return'], epoch+1)
+        writer.add_scalar('Validation_Detailed/Avg_Normalized_Entropy', validation_metrics['avg_normalized_entropy'], epoch+1)
+        writer.add_scalar('Validation_Detailed/Avg_Transaction_Cost', validation_metrics['avg_transaction_cost'], epoch+1)
+        writer.add_scalar('Validation_Detailed/Avg_Relative_Turnover', validation_metrics['avg_relative_turnover'], epoch+1)
+        writer.add_scalar('Validation_Detailed/Avg_Cash_Weight', validation_metrics['avg_cash_weight'], epoch+1)
+        for name, param in policy.named_parameters():
+            writer.add_histogram(f'Model_Parameters/{name}', param, epoch+1)
+            writer.add_histogram(f'Model_Gradients/{name}', param.grad, epoch+1)
+
+        for asset in assets:
+            mean_weight = validation_results[f'weight_{asset}'].mean()
+            writer.add_scalar(f'Validation_Avg_Portfolio_Weights/{asset}', mean_weight, epoch+1)
+        writer.add_scalar('Validation_Avg_Portfolio_Weights/_cash', validation_results['weight_cash'].mean(), epoch+1)
 
         save_checkpoint(policy, optimizer, epoch+1, checkpoint_dir)
         print(f"\tCheckpoint saved at epoch {epoch+1}")
