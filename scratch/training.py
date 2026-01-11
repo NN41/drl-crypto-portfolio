@@ -15,7 +15,7 @@ from src.data_loading import load_and_split_data
 
 commission_rate = 0.0005 # 0.0005 = 5 bips
 n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
-batch_size = 512 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
+batch_size = 50 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
 n_online_batches = 30
 n_osbl_update_steps = 30
 
@@ -66,9 +66,9 @@ seed_everything(seed=42)
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
 learning_rate = 3e-5
 weight_decay = 1e-8
-n_epochs = 10000
+n_batches_per_epoch = 200
 n_epochs_per_validation = 10
-n_batches_per_epoch = 50
+n_epochs = 10000
 geometric_parameter = 5e-5
 
 

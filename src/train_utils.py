@@ -3,6 +3,39 @@ import torch
 import torch.nn.functional as F
 from src.portfolio import approximate_mu
 
+
+def prepare_batch_gpu(prices_tensor, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
+    """
+    GPU-optimized batch preparation using vectorized torch ops instead of Python loop.
+    """
+    # Extract sliding windows using unfold - avoids Python loop over batch items
+    start = batch_start_idx - n_recent_periods + 1
+    all_prices = prices_tensor[:, :, start:batch_start_idx + batch_size]
+    windows = all_prices.unfold(dimension=2, size=n_recent_periods, step=1)
+    batch_price_histories = windows.permute(2, 0, 1, 3)  # (batch_size, F, M, n_recent_periods)
+
+    # Normalize by latest close price
+    latest_close_prices = batch_price_histories[:, -1:, :, -1:]
+    batch_normalized_price_histories = batch_price_histories / latest_close_prices
+
+    batch_previous_weights = portfolio_vector_memory[batch_start_idx-1:batch_start_idx-1+batch_size]
+
+    # Price relatives from close prices (last feature)
+    batch_previous_close = prices_tensor[-1, :, batch_start_idx-1:batch_start_idx-1+batch_size]
+    batch_current_close = prices_tensor[-1, :, batch_start_idx:batch_start_idx+batch_size]
+    batch_next_close = prices_tensor[-1, :, batch_start_idx+1:batch_start_idx+1+batch_size]
+    batch_current_price_relatives = (batch_current_close / batch_previous_close).T
+    batch_next_price_relatives = (batch_next_close / batch_current_close).T
+
+    return {
+        "batch_start_idx": batch_start_idx,
+        "normalized_price_histories": batch_normalized_price_histories,
+        "current_price_relatives": batch_current_price_relatives,
+        "previous_weights": batch_previous_weights,
+        "next_price_relatives": batch_next_price_relatives,
+    }
+
+
 def geometrically_sample_batch_start_indices(n_samples, n_available_periods, batch_size, geometric_parameter, n_recent_periods):
     max_batch_start_index = n_available_periods - batch_size - 1 # must have enough data for batch_size consecutive actions plus one final reward
     min_batch_start_index = n_recent_periods - 1 # must have enough data for the price history
