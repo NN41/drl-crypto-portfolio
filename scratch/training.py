@@ -79,9 +79,10 @@ print(f"Total number of parameter updates: {total_update_steps:,d}. \nTotal numb
 # %%
 
 n_available_periods = train_prices.shape[-1]
-prices_array = train_prices
 
-portfolio_vector_memory = np.ones((n_available_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+# Convert to GPU tensors for gpu_mode training
+prices_array = torch.tensor(train_prices, device=device, dtype=torch.float32)
+portfolio_vector_memory = torch.ones((n_available_periods, n_non_cash_assets + 1), device=device, dtype=torch.float32) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -135,7 +136,7 @@ for epoch in range(n_epochs):
         n_recent_periods=n_recent_periods
     )
 
-    pvm_before_update = portfolio_vector_memory.copy()
+    pvm_before_update = portfolio_vector_memory.clone()
 
     epoch_avg_log_return = run_one_epoch(
         prices_array=prices_array,
@@ -146,11 +147,12 @@ for epoch in range(n_epochs):
         n_recent_periods=n_recent_periods,
         batch_size=batch_size,
         device=device,
-        commission_rate=commission_rate
+        commission_rate=commission_rate,
+        gpu_mode=True
     )
 
     n_pvm_updates = batch_size * n_batches_per_epoch
-    avg_abs_pvm_change = np.sum(np.abs(portfolio_vector_memory - pvm_before_update)) / n_pvm_updates
+    avg_abs_pvm_change = torch.sum(torch.abs(portfolio_vector_memory - pvm_before_update)).item() / n_pvm_updates
 
     print(f"\tEpoch avg log-return: {epoch_avg_log_return:.9f}")
     writer.add_scalar('Train/AvgLogReturn', epoch_avg_log_return, epoch+1)
