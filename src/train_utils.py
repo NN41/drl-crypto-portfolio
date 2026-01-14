@@ -3,6 +3,39 @@ import torch
 import torch.nn.functional as F
 from src.portfolio import approximate_mu
 
+
+def prepare_batch_gpu(prices_tensor, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
+    """
+    GPU-optimized batch preparation using vectorized torch ops instead of Python loop.
+    """
+    # Extract sliding windows using unfold - avoids Python loop over batch items
+    start = batch_start_idx - n_recent_periods + 1
+    all_prices = prices_tensor[:, :, start:batch_start_idx + batch_size]
+    windows = all_prices.unfold(dimension=2, size=n_recent_periods, step=1)
+    batch_price_histories = windows.permute(2, 0, 1, 3)  # (batch_size, F, M, n_recent_periods)
+
+    # Normalize by latest close price
+    latest_close_prices = batch_price_histories[:, -1:, :, -1:]
+    batch_normalized_price_histories = batch_price_histories / latest_close_prices
+
+    batch_previous_weights = portfolio_vector_memory[batch_start_idx-1:batch_start_idx-1+batch_size]
+
+    # Price relatives from close prices (last feature)
+    batch_previous_close = prices_tensor[-1, :, batch_start_idx-1:batch_start_idx-1+batch_size]
+    batch_current_close = prices_tensor[-1, :, batch_start_idx:batch_start_idx+batch_size]
+    batch_next_close = prices_tensor[-1, :, batch_start_idx+1:batch_start_idx+1+batch_size]
+    batch_current_price_relatives = (batch_current_close / batch_previous_close).T
+    batch_next_price_relatives = (batch_next_close / batch_current_close).T
+
+    return {
+        "batch_start_idx": batch_start_idx,
+        "normalized_price_histories": batch_normalized_price_histories,
+        "current_price_relatives": batch_current_price_relatives,
+        "previous_weights": batch_previous_weights,
+        "next_price_relatives": batch_next_price_relatives,
+    }
+
+
 def geometrically_sample_batch_start_indices(n_samples, n_available_periods, batch_size, geometric_parameter, n_recent_periods):
     max_batch_start_index = n_available_periods - batch_size - 1 # must have enough data for batch_size consecutive actions plus one final reward
     min_batch_start_index = n_recent_periods - 1 # must have enough data for the price history
@@ -56,7 +89,7 @@ def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, 
         "next_price_relatives": batch_next_price_relatives, # y_{t+1}, necessary for the reward of taking action w_t
     }
 
-def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, commission_rate):
+def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, commission_rate, gpu_mode=False):
     '''
     At time t, the agent chooses w_t based on X_t and w_{t-1}, which must be rewarded based on the price-relative vector y_{t+1}.
 
@@ -66,13 +99,18 @@ def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, c
 
     We instead use the reward r'_{t+1} = ln(p'_{t+1}/p'_t). This depends on the portfolio values BEFORE rebalancing. This way, the reward
     for action w_t actually depends on mu_t, linking w_t directly to both the quality of investments (through y_{t+1}) as well as the
-    effect on transaction costs through mu_t. This way it learns to balance expected returns and costs.  
+    effect on transaction costs through mu_t. This way it learns to balance expected returns and costs.
     '''
-
-    batch_normalized_price_histories = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
-    batch_previous_weights = torch.from_numpy(batch['previous_weights']).float().to(device)
-    batch_current_price_relatives = torch.from_numpy(batch['current_price_relatives']).float().to(device)
-    batch_next_price_relatives = torch.from_numpy(batch['next_price_relatives']).float().to(device)
+    if gpu_mode:
+        batch_normalized_price_histories = batch['normalized_price_histories'].float()
+        batch_previous_weights = batch['previous_weights'].float()
+        batch_current_price_relatives = batch['current_price_relatives'].float()
+        batch_next_price_relatives = batch['next_price_relatives'].float()
+    else:
+        batch_normalized_price_histories = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
+        batch_previous_weights = torch.from_numpy(batch['previous_weights']).float().to(device)
+        batch_current_price_relatives = torch.from_numpy(batch['current_price_relatives']).float().to(device)
+        batch_next_price_relatives = torch.from_numpy(batch['next_price_relatives']).float().to(device)
 
     policy.train()
     batch_current_weights = policy(batch_normalized_price_histories, batch_previous_weights)
@@ -108,23 +146,30 @@ def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, c
 
     return batch_log_returns, batch_current_weights
 
-def run_one_epoch(prices_array, batch_start_indices, portfolio_vector_memory, policy, optimizer, n_recent_periods, batch_size, device, commission_rate):
+def run_one_epoch(prices_array, batch_start_indices, portfolio_vector_memory, policy, optimizer, n_recent_periods, batch_size, device, commission_rate, gpu_mode=False):
 
     epoch_total_log_return = 0
     epoch_number_of_steps = 0
 
     for batch_start_idx in batch_start_indices:
 
-        batch = prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods)
-        batch_log_returns, batch_weights = perform_one_minibatch_update(batch=batch, policy=policy, optimizer=optimizer, device=device, batch_size=batch_size, commission_rate=commission_rate)
+        if gpu_mode:
+            batch = prepare_batch_gpu(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods)
+        else:
+            batch = prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods)
+
+        batch_log_returns, batch_weights = perform_one_minibatch_update(batch=batch, policy=policy, optimizer=optimizer, device=device, batch_size=batch_size, commission_rate=commission_rate, gpu_mode=gpu_mode)
 
         epoch_total_log_return += batch_log_returns.sum().item()
         epoch_number_of_steps += batch_log_returns.shape[0]
 
-        # update portfolio memory vector
+        # Update portfolio memory vector
         batch_first_action_idx = batch['batch_start_idx']
-        batch_weights = batch_weights.detach().cpu().numpy()
-        portfolio_vector_memory[batch_first_action_idx:batch_first_action_idx+batch_size] = batch_weights
+        if gpu_mode:
+            portfolio_vector_memory[batch_first_action_idx:batch_first_action_idx+batch_size] = batch_weights.detach()
+        else:
+            batch_weights = batch_weights.detach().cpu().numpy()
+            portfolio_vector_memory[batch_first_action_idx:batch_first_action_idx+batch_size] = batch_weights
 
     epoch_avg_log_return = epoch_total_log_return / epoch_number_of_steps
     return epoch_avg_log_return

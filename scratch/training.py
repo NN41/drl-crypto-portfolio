@@ -13,11 +13,6 @@ from src.evaluation import run_walk_forward_test, calculate_performance_metrics
 from src.model_io import save_model, save_checkpoint, save_run_config
 from src.data_loading import load_and_split_data
 
-commission_rate = 0.0005 # 0.0005 = 5 bips
-n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
-batch_size = 500 # with 2 assets, do x5.5 to match the number of training data points used per update; number of actions in a single batch
-n_online_batches = 30
-n_osbl_update_steps = 30
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 print(f"Using device {device}")
@@ -64,28 +59,48 @@ print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_perio
 seed_everything(seed=42)
 
 n_features, n_non_cash_assets, n_train_periods = train_prices.shape
-learning_rate = 3e-5 * np.sqrt(10)
-weight_decay = 1e-8
-n_epochs = 20000
-n_epochs_per_validation = 50
-n_batches_per_epoch = 100
+
+commission_rate = 0.0005 # 0.0005 = 5 bips
+batch_size = 500
+
 geometric_parameter = 5e-5
+n_online_batches = 30
+n_osbl_update_steps = 30
+n_recent_periods = 50 # number of periods passed to the policy to choose a portfolio
 
+# periods_per_epoch = 1e4 * 5
+# periods_per_validation = periods_per_epoch * 100 / 2
+# paper_total_steps = 2e6 * 10
+periods_per_epoch = int(1e4)
+periods_per_validation = int(periods_per_epoch * 100)
+paper_total_steps = int(2e6)
 
-total_update_steps = n_epochs * n_batches_per_epoch
-total_periods_visited = total_update_steps * batch_size
-print(f"Total number of parameter updates: {total_update_steps:,d}. \nTotal number of periods visited: {total_periods_visited:,d}. \nPeriods per epoch: {n_batches_per_epoch*batch_size:,d}")
+paper_batch_size = 50
+total_periods = int(paper_total_steps * paper_batch_size)
+n_epochs = int(total_periods / periods_per_epoch)
+n_validations = int(total_periods / periods_per_validation)
+n_epochs_per_validation = int(n_epochs / n_validations)
+n_batches_per_epoch = int(periods_per_epoch / batch_size)
+
+paper_learing_rate = 3e-5
+learning_rate_scaling_factor = np.sqrt(batch_size / paper_batch_size)
+learning_rate = paper_learing_rate * learning_rate_scaling_factor
+weight_decay = 1e-8
+
+print(f"paper_total_steps={paper_total_steps:.0e}, paper_batch_size={paper_batch_size}, total_periods={total_periods:.0e}")
+print(f"periods_per_epoch={periods_per_epoch:.0e}, periods_per_validation={periods_per_validation:.0e}")
+print(f"learning_rate={learning_rate:.1e} (learning_rate_scaling_factor={learning_rate_scaling_factor:.2f})")
+print(f"n_epochs={n_epochs}, n_validations={n_validations}, n_epochs_per_validation={n_epochs_per_validation}, n_batches_per_epoch={n_batches_per_epoch}")
 
 # %%
 
 n_available_periods = train_prices.shape[-1]
-prices_array = train_prices
 
-portfolio_vector_memory = np.ones((n_available_periods, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+# Convert to GPU tensors for gpu_mode training
+prices_array = torch.tensor(train_prices, device=device, dtype=torch.float32)
+portfolio_vector_memory = torch.ones((n_available_periods, n_non_cash_assets + 1), device=device, dtype=torch.float32) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
-# %%
 
 run_timestamp = datetime.now(tz=timezone.utc).strftime("%y%m%d_%H%M%S")
 run_dir = f'./runs/{run_timestamp}'
@@ -116,6 +131,13 @@ run_config = {
     'n_features': n_features,
     'commission_rate': commission_rate,
     'n_epochs_per_validation': n_epochs_per_validation,
+    'paper_total_steps': paper_total_steps,
+    'paper_batch_size': paper_batch_size,
+    'total_periods': total_periods,
+    'periods_per_epoch': periods_per_epoch,
+    'periods_per_validation': periods_per_validation,
+    'paper_learing_rate': paper_learing_rate,
+    'learning_rate_scaling_factor': learning_rate_scaling_factor,
 }
 save_run_config(run_config, run_dir)
 
@@ -135,7 +157,7 @@ for epoch in range(n_epochs):
         n_recent_periods=n_recent_periods
     )
 
-    pvm_before_update = portfolio_vector_memory.copy()
+    pvm_before_update = portfolio_vector_memory.clone()
 
     epoch_avg_log_return = run_one_epoch(
         prices_array=prices_array,
@@ -146,11 +168,12 @@ for epoch in range(n_epochs):
         n_recent_periods=n_recent_periods,
         batch_size=batch_size,
         device=device,
-        commission_rate=commission_rate
+        commission_rate=commission_rate,
+        gpu_mode=True
     )
 
     n_pvm_updates = batch_size * n_batches_per_epoch
-    avg_abs_pvm_change = np.sum(np.abs(portfolio_vector_memory - pvm_before_update)) / n_pvm_updates
+    avg_abs_pvm_change = torch.sum(torch.abs(portfolio_vector_memory - pvm_before_update)).item() / n_pvm_updates
 
     print(f"\tEpoch avg log-return: {epoch_avg_log_return:.9f}")
     writer.add_scalar('Train/AvgLogReturn', epoch_avg_log_return, epoch+1)
@@ -196,9 +219,9 @@ for epoch in range(n_epochs):
         writer.add_scalar('Validation_Detailed/Avg_Transaction_Cost', validation_metrics['avg_transaction_cost'], epoch+1)
         writer.add_scalar('Validation_Detailed/Avg_Relative_Turnover', validation_metrics['avg_relative_turnover'], epoch+1)
         writer.add_scalar('Validation_Detailed/Avg_Cash_Weight', validation_metrics['avg_cash_weight'], epoch+1)
-        for name, param in policy.named_parameters():
-            writer.add_histogram(f'Model_Parameters/{name}', param, epoch+1)
-            writer.add_histogram(f'Model_Gradients/{name}', param.grad, epoch+1)
+        # for name, param in policy.named_parameters():
+        #     writer.add_histogram(f'Model_Parameters/{name}', param, epoch+1)
+        #     writer.add_histogram(f'Model_Gradients/{name}', param.grad, epoch+1)
 
         for asset in assets:
             mean_weight = validation_results[f'weight_{asset}'].mean()

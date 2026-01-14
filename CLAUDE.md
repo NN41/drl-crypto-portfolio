@@ -36,9 +36,59 @@
 * No silent failures or defensive programming - fail fast and explicit
 
 ## Command Execution Guidelines
+
+### Running Python Scripts
+**Three ways to run Python code:**
+
+1. **Interactive files with `# %%` markers** (e.g., `scratch/training.py`, `scratch/test_gpu_optimization.py`)
+   - These are Jupyter-style files meant for VSCode's Python Interactive window
+   - User runs these cell-by-cell - DO NOT run them as scripts
+   - ❌ Never use: `python filename.py` or `conda run -n env python filename.py`
+   - ✅ User will run them interactively in VSCode
+
+2. **Standalone Python scripts** (no `# %%` markers)
+   - Can be run directly from command line
+   - ✅ Use: `conda run -n drl-crypto-portfolio python script.py`
+   - Check correct conda environment name first with `conda env list`
+   - Must handle imports correctly (see below)
+
+3. **Inline Python commands** (for quick checks)
+   - ✅ Use: `conda run -n drl-crypto-portfolio python -c "print('hello')"`
+   - Keep simple - single line only
+   - No multiline strings with conda run (causes parsing errors)
+   - For complex operations, create a temporary .py file instead
+
+### Common Python Execution Errors Encountered
+
+**Import errors** (`ModuleNotFoundError: No module named 'src'`):
+- **Cause**: Python can't find project modules
+- **Fix**: Add `sys.path.insert(0, '.')` at top of script OR run from project root
+- **Example**:
+  ```python
+  import sys
+  sys.path.insert(0, '.')
+  from src.policies import CNNPolicy  # Now works
+  ```
+
+**Wrong conda environment**:
+- **Cause**: Using wrong environment name (e.g., `rl-portfolio` instead of `drl-crypto-portfolio`)
+- **Fix**: Check with `conda env list` first, then use exact name
+- **Example**: `conda run -n drl-crypto-portfolio python script.py`
+
+**Conda multiline command errors**:
+- **Cause**: `conda run` doesn't support multiline Python strings well
+- **Fix**: Write code to a .py file first, then run the file
+- ❌ Avoid: `conda run -n env python -c "line1\nline2\nline3"`
+- ✅ Use: Create temp.py, then `conda run -n env python temp.py`
+
+**Running interactive files as scripts**:
+- **Cause**: Trying to run `# %%` files with `python filename.py`
+- **Fix**: Don't run them - these are for user's interactive execution
+- **Recognition**: If file has `# %%` markers anywhere, it's interactive
+
+### General Command Guidelines
 * **Avoid f-strings with {} in bash -c commands** - Bash interprets `${}` as variable substitution, causing "bad substitution" errors
 * **No Unicode characters in command output** - Use ASCII only (avoid ✅❌⚠️ emojis) due to Windows codepage limitations (cp1252)
-* **Keep inline Python simple** - Complex scripts should use separate .py files instead of bash -c multiline strings
 * **Safe string formatting patterns:**
   - ✅ Use: `print('Value:', variable)` or `'Text {}'.format(var)`
   - ❌ Avoid: `print(f'Value: ${variable}')` in bash commands
