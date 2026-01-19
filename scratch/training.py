@@ -8,22 +8,14 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.policies import CNNPolicy
-from src.train_utils import geometrically_sample_batch_start_indices, run_one_epoch
-from src.evaluation import run_walk_forward_test, calculate_performance_metrics
+from src.train_utils import geometrically_sample_batch_start_indices, run_one_epoch, seed_everything
+from src.evaluation import run_walk_forward, calculate_performance_metrics, WalkForwardConfig
 from src.model_io import save_model, save_checkpoint, save_run_config
 from src.data_loading import load_and_split_data
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 print(f"Using device {device}")
-
-def seed_everything(seed=42):
-    # Complete deterministic behavior on GPU operations is difficult due to CUDA optimizations.
-    # The following gives a good balance between reproducibility and performance.
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = True
 
 # %%
 
@@ -101,6 +93,16 @@ prices_array = torch.tensor(train_prices, device=device, dtype=torch.float32)
 portfolio_vector_memory = torch.ones((n_available_periods, n_non_cash_assets + 1), device=device, dtype=torch.float32) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+wf_config = WalkForwardConfig(
+    n_recent_periods=n_recent_periods,
+    commission_rate=commission_rate,
+    device=device,
+    assets=assets,
+    n_osbl_update_steps=n_osbl_update_steps,
+    osbl_batch_size=batch_size,
+    geometric_parameter=geometric_parameter,
+)
 
 run_timestamp = datetime.now(tz=timezone.utc).strftime("%y%m%d_%H%M%S")
 run_dir = f'./runs/{run_timestamp}'
@@ -194,19 +196,14 @@ for epoch in range(n_epochs):
     if (epoch + 1) % n_epochs_per_validation == 0:
         print(f"\tRunning validation...")
         initial_portfolio = np.array([1] * (n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
-        validation_results = run_walk_forward_test(
+        validation_results = run_walk_forward(
             policy=policy,
-            initial_portfolio_weights=initial_portfolio,
-            initial_prices=train_prices,
-            forward_prices=validation_prices,
+            initial_weights=initial_portfolio,
+            seen_prices=train_prices,
+            unseen_prices=validation_prices,
             all_datetimes=all_datetimes,
-            assets=assets,
-            n_recent_periods=n_recent_periods,
-            commission_rate=commission_rate,
-            device=device,
             use_osbl=False,
-            n_osbl_update_steps=None,
-            optimizer=None,
+            config=wf_config,
         )
         validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES, commission_rate)
         writer.add_scalar('Validation/Final_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)

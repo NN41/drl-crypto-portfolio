@@ -1,5 +1,7 @@
 # %%
 
+### DON'T TOUCH THIS FILE ANYMORE, IT IS DEPRECATED AND NOT USED.
+
 import os
 import numpy as np
 import pandas as pd
@@ -10,7 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.policies import CNNPolicy, BuyAndHoldPolicy, EqualWeightPolicy
-from src.evaluation import run_walk_forward_test, calculate_performance_metrics
+from src.evaluation import run_walk_forward, calculate_performance_metrics, WalkForwardConfig
 from src.model_io import save_model, load_model, load_checkpoint
 
 commission_rate = 0.0005 # 0.0005 = 5 bips

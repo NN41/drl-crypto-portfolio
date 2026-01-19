@@ -1,27 +1,60 @@
 # %%
 
+import time
 import numpy as np
 import pandas as pd
 import torch
+from dataclasses import dataclass
+from typing import List
 from src.portfolio import approximate_mu
 from src.train_utils import geometrically_sample_batch_start_indices, run_one_epoch
 
-def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, forward_prices, all_datetimes, assets, n_recent_periods, commission_rate, device, use_osbl, n_osbl_update_steps, optimizer):
 
-    try:
+@dataclass
+class WalkForwardConfig:
+    """Fixed parameters for walk-forward evaluation (don't change per call)."""
+    n_recent_periods: int
+    commission_rate: float
+    device: torch.device
+    assets: List[str]
+    n_osbl_update_steps: int
+    osbl_batch_size: int
+    geometric_parameter: float
+
+
+def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_datetimes, use_osbl, config, optimizer=None, verbose=False):
+    """
+    Run walk-forward evaluation on a trading policy.
+
+    Args:
+        policy: Trading policy (CNNPolicy, EqualWeightPolicy, etc.)
+        initial_weights: Initial portfolio weights (1D array, shape [n_assets + 1] including cash)
+        seen_prices: Historical price data used as context (shape [n_features, n_assets, n_periods])
+        unseen_prices: Future price data to walk through (shape [n_features, n_assets, n_periods])
+        all_datetimes: Array of datetime objects for all periods
+        use_osbl: Whether to use Online Stochastic Batch Learning
+        config: WalkForwardConfig with fixed parameters
+        optimizer: PyTorch optimizer (required if use_osbl=True)
+        verbose: Whether to print progress updates (default False)
+
+    Returns:
+        DataFrame with walk-forward results including weights, returns, and metrics.
+    """
+    if use_osbl and optimizer is None:
+        raise ValueError("optimizer is required when use_osbl=True")
+
+    if hasattr(policy, 'eval'):
         policy.eval()
-    except:
-        pass
 
-    seen_prices = initial_prices.copy()
-    unseen_prices = forward_prices.copy()
+    seen_prices = seen_prices.copy()
+    unseen_prices = unseen_prices.copy()
 
     n_initial_periods = seen_prices.shape[-1]
     current_idx = n_initial_periods - 1
 
-    n_non_cash_assets = initial_prices.shape[1]
+    n_non_cash_assets = seen_prices.shape[1]
     current_portfolio_vector_memory = np.ones((n_initial_periods - 1, n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
-    current_portfolio_vector_memory[-1] = initial_portfolio_weights
+    current_portfolio_vector_memory[-1] = initial_weights
 
     test_results = {
         'datetimes': [],
@@ -30,7 +63,7 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
         'relative_turnover': [],
         'transaction_remainder_factor': [],
     }
-    for i, asset in enumerate(assets):
+    for i, asset in enumerate(config.assets):
         test_results[f'weight_before_{asset}'] = []
         test_results[f'weight_{asset}'] = []
         test_results[f'close_{asset}'] = []
@@ -39,10 +72,15 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
 
     previous_transaction_remainder_factor = 1.0
 
+    total_steps = unseen_prices.shape[-1]
+    steps_processed = 0
+    last_reported_percent = -1
+    start_time = time.time()
+
     while unseen_prices.shape[-1] > 0:
 
         # At time t, at the start of Period t+1, we observe the price history up to and including time t.
-        price_history = seen_prices[:, :, -n_recent_periods:]
+        price_history = seen_prices[:, :, -config.n_recent_periods:]
         latest_close_prices = price_history[-1:, :, -1:]
         normalized_price_history = price_history / latest_close_prices
 
@@ -59,8 +97,8 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
 
         # At time t, we choose the weights for the coming period, Period t+1
         with torch.no_grad():
-            normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=device)
-            previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=device)
+            normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=config.device)
+            previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=config.device)
             new_weights = policy(normalized_price_tensor, previous_weights_tensor)
             new_weights = new_weights.squeeze(0).cpu().numpy()
 
@@ -69,17 +107,17 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
             torch.from_numpy(previous_weights).unsqueeze(0),
             torch.from_numpy(price_relative).unsqueeze(0),
             torch.from_numpy(new_weights).unsqueeze(0),
-            commission_rate,
+            config.commission_rate,
             train_mode=False,
             return_w_prime=True
         )
         transaction_remainder_factor = transaction_remainder_factor.item()
         weights_before_rebalancing = weights_before_rebalancing.squeeze(0).numpy()
-        relative_turnover = (1 - transaction_remainder_factor) / commission_rate
+        relative_turnover = (1 - transaction_remainder_factor) / config.commission_rate
 
         test_results['relative_turnover'].append(relative_turnover)
         test_results['transaction_remainder_factor'].append(transaction_remainder_factor)
-        for i, asset in enumerate(assets):
+        for i, asset in enumerate(config.assets):
             test_results[f'weight_before_{asset}'].append(weights_before_rebalancing[i+1])
             test_results[f'weight_{asset}'].append(new_weights[i+1])
             test_results[f'close_{asset}'].append(latest_close_prices.squeeze()[i])
@@ -88,14 +126,12 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
         current_portfolio_vector_memory = np.concatenate([current_portfolio_vector_memory, new_weights[np.newaxis, :]], axis=0)
 
         if use_osbl:
-            batch_size = int(50 * 5.5)
-            geometric_parameter = 5e-5
             osbl_batch_start_indices = geometrically_sample_batch_start_indices(
-                n_samples=n_osbl_update_steps,
+                n_samples=config.n_osbl_update_steps,
                 n_available_periods=seen_prices.shape[-1],
-                batch_size=batch_size,
-                geometric_parameter=geometric_parameter,
-                n_recent_periods=n_recent_periods
+                batch_size=config.osbl_batch_size,
+                geometric_parameter=config.geometric_parameter,
+                n_recent_periods=config.n_recent_periods
             )
 
             policy.train()
@@ -105,10 +141,10 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
                 portfolio_vector_memory=current_portfolio_vector_memory,
                 policy=policy,
                 optimizer=optimizer,
-                n_recent_periods=n_recent_periods,
-                batch_size=batch_size,
-                device=device,
-                commission_rate=commission_rate
+                n_recent_periods=config.n_recent_periods,
+                batch_size=config.osbl_batch_size,
+                device=config.device,
+                commission_rate=config.commission_rate
             )
             policy.eval()
 
@@ -119,29 +155,34 @@ def run_walk_forward_test(policy, initial_portfolio_weights, initial_prices, for
         seen_prices = np.concatenate([seen_prices, unseen_prices[:, :, :1]], axis=-1)
         unseen_prices = unseen_prices[:, :, 1:]
 
+        steps_processed += 1
+        if verbose:
+            current_percent = (steps_processed * 10) // total_steps * 10
+            if current_percent > last_reported_percent:
+                elapsed = time.time() - start_time
+                eta = (elapsed / steps_processed) * (total_steps - steps_processed) if steps_processed > 0 else 0
+                print(f"Walk-forward: {steps_processed}/{total_steps} steps ({current_percent}%) | Elapsed: {elapsed/60:.1f}m | ETA: {eta/60:.1f}m")
+                last_reported_percent = current_percent
+
     df_results = pd.DataFrame(test_results)
 
     # Compute cash weights as 1 - sum of all non-cash asset weights
-    weight_cols = [f'weight_{asset}' for asset in assets]
+    weight_cols = [f'weight_{asset}' for asset in config.assets]
     df_results['weight_cash'] = 1 - df_results[weight_cols].sum(axis=1)
-    
-    weight_before_cols = [f'weight_before_{asset}' for asset in assets]
+
+    weight_before_cols = [f'weight_before_{asset}' for asset in config.assets]
     df_results['weight_before_cash'] = 1 - df_results[weight_before_cols].sum(axis=1)
     df_results['start_of_period'] = df_results.index.values + 1
 
     all_weight_cols = ['weight_cash'] + weight_cols
     all_weights = df_results[all_weight_cols]
-    # epsilon = 1e-9
-    # entropy = (-1) * np.sum(all_weights * np.log(all_weights + epsilon), axis=1)
-    # max_entropy = np.log(len(all_weights.columns))
-    # df_results['normalized_entropy'] = entropy / max_entropy
 
     all_weights_clipped = np.clip(all_weights, 0, 1)
     epsilon = 1e-9
     entropy = (-1) * np.sum(all_weights_clipped * np.log(all_weights_clipped + epsilon), axis=1)
     max_entropy = np.log(len(all_weights.columns))
     df_results['normalized_entropy'] = entropy / max_entropy
-    
+
     return df_results
 
 

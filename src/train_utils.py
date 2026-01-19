@@ -4,6 +4,13 @@ import torch.nn.functional as F
 from src.portfolio import approximate_mu
 
 
+def seed_everything(seed=42):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = True
+
+
 def prepare_batch_gpu(prices_tensor, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
     """
     GPU-optimized batch preparation using vectorized torch ops instead of Python loop.

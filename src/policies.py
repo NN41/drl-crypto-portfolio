@@ -53,27 +53,28 @@ class EqualWeightPolicy:
     def __call__(self, price_history, previous_weights):
         return torch.tensor([0] + [1 / self.n_non_cash_assets] * self.n_non_cash_assets, dtype=torch.float32).unsqueeze(0)
 
-class BuyAndHoldPolicy:
-    def __call__(self, normalized_historical_prices: torch.Tensor, previous_portfolio_weights: torch.Tensor):
-        x = normalized_historical_prices
-        w_prev = previous_portfolio_weights
+## We don't need a policy for computing buy and hold performance metrics.
+# class BuyAndHoldPolicy:
+#     def __call__(self, normalized_historical_prices: torch.Tensor, previous_portfolio_weights: torch.Tensor):
+#         x = normalized_historical_prices
+#         w_prev = previous_portfolio_weights
 
-        if x.dim() == 3: # add batch dimension if necessary
-            x = x.unsqueeze(0)
-        elif x.dim() != 4:
-            raise ValueError(f"normalized_historical_prices must be 3d or 4d, got {x.dim()}")
+#         if x.dim() == 3: # add batch dimension if necessary
+#             x = x.unsqueeze(0)
+#         elif x.dim() != 4:
+#             raise ValueError(f"normalized_historical_prices must be 3d or 4d, got {x.dim()}")
         
-        if w_prev.dim() == 1: # add batch dimension if necessary
-            w_prev = w_prev.unsqueeze(0)
-        elif w_prev.dim() != 2:
-            raise ValueError(f"previous_portfolio_weights must be 1d or 2d, got {w_prev.dim()}")
+#         if w_prev.dim() == 1: # add batch dimension if necessary
+#             w_prev = w_prev.unsqueeze(0)
+#         elif w_prev.dim() != 2:
+#             raise ValueError(f"previous_portfolio_weights must be 1d or 2d, got {w_prev.dim()}")
 
-        price_relatives = 1 / x[:, -1, :, -2]
-        ones_tensor = torch.ones(price_relatives.shape[0], 1, device=x.device)
-        price_relatives = torch.concat([ones_tensor, price_relatives], dim=1)
-        w_prev_drifted = (price_relatives * w_prev) / torch.sum((price_relatives * w_prev), dim=1, keepdim=True)
+#         price_relatives = 1 / x[:, -1, :, -2]
+#         ones_tensor = torch.ones(price_relatives.shape[0], 1, device=x.device)
+#         price_relatives = torch.concat([ones_tensor, price_relatives], dim=1)
+#         w_prev_drifted = (price_relatives * w_prev) / torch.sum((price_relatives * w_prev), dim=1, keepdim=True)
 
-        return w_prev_drifted
+#         return w_prev_drifted
 
 # %%
 

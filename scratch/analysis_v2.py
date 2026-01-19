@@ -10,7 +10,7 @@ from plotly.subplots import make_subplots
 
 from src.policies import CNNPolicy, EqualWeightPolicy
 from src.data_loading import load_and_split_data
-from src.evaluation import run_walk_forward_test, calculate_performance_metrics
+from src.evaluation import run_walk_forward, calculate_performance_metrics, WalkForwardConfig
 from src.model_io import load_checkpoint
 
 # %%
@@ -39,6 +39,17 @@ END_DATE_TEST = datetime.fromisoformat(config['END_DATE_TEST']).replace(tzinfo=t
 assets = [s.split('_')[0].split('-')[0].lower() for s in instrument_names]
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+wf_config = WalkForwardConfig(
+    n_recent_periods=n_recent_periods,
+    commission_rate=commission_rate,
+    device=device,
+    assets=assets,
+    n_osbl_update_steps=config['n_osbl_update_steps'],
+    osbl_batch_size=config['batch_size'],
+    geometric_parameter=config['geometric_parameter'],
+)
+
 print(f"Using device {device}")
 print(f"Loaded config from {config_path}")
 
@@ -63,21 +74,16 @@ epoch = load_checkpoint(checkpoint_path, policy, optimizer, device)
 
 
 print("Running walk-forward test on validation set (no OSBL)...")
-initial_portfolio = np.ones(n_non_cash_assets + 1) / (n_non_cash_assets + 1)
-# initial_portfolio = np.insert(np.zeros(n_non_cash_assets), 0, 1)
-validation_results = run_walk_forward_test(
+# initial_portfolio = np.ones(n_non_cash_assets + 1) / (n_non_cash_assets + 1)
+initial_portfolio = np.insert(np.zeros(n_non_cash_assets), 0, 1)
+validation_results = run_walk_forward(
     policy=policy,
-    initial_portfolio_weights=initial_portfolio,
-    initial_prices=train_prices,
-    forward_prices=validation_prices,
+    initial_weights=initial_portfolio,
+    seen_prices=train_prices,
+    unseen_prices=validation_prices,
     all_datetimes=all_datetimes,
-    assets=assets,
-    n_recent_periods=n_recent_periods,
-    commission_rate=commission_rate,
-    device=device,
     use_osbl=False,
-    n_osbl_update_steps=None,
-    optimizer=None,
+    config=wf_config,
 )
 validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES, commission_rate)
 print(f"VALIDATION RESULTS: fAPV={validation_metrics['fAPV']:.4f}, SR={validation_metrics['SR']:.4f}, MDD={validation_metrics['MDD']:.4f}")
@@ -143,11 +149,9 @@ print(f"\nUBAH: fAPV={ubah_fAPV:.4f}, SR={ubah_SR:.4f}, MDD={ubah_MDD:.4f}")
 print("\nRunning UCRP walk-forward...")
 ucrp_policy = EqualWeightPolicy(n_non_cash_assets)
 ucrp_initial = np.array([0.0] + [1.0 / n_non_cash_assets] * n_non_cash_assets)
-ucrp_results = run_walk_forward_test(
-    policy=ucrp_policy, initial_portfolio_weights=ucrp_initial, initial_prices=train_prices,
-    forward_prices=validation_prices, all_datetimes=all_datetimes, assets=assets,
-    n_recent_periods=n_recent_periods, commission_rate=commission_rate, device=device,
-    use_osbl=False, n_osbl_update_steps=None, optimizer=None,
+ucrp_results = run_walk_forward(
+    policy=ucrp_policy, initial_weights=ucrp_initial, seen_prices=train_prices,
+    unseen_prices=validation_prices, all_datetimes=all_datetimes, use_osbl=False, config=wf_config,
 )
 ucrp_metrics = calculate_performance_metrics(ucrp_results, RESOLUTION_MINUTES, commission_rate)
 ucrp_apv_over_time = np.concatenate([[1.0], ucrp_metrics['apv_ratios']])
