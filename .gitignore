@@ -73,11 +73,11 @@ venv.bak/
 
 # Claude Code
 .claude/
+tmpclaude-*
 
 # ===================================================================
 # Project-Specific Files
 # ===================================================================
-# research papers
 docs/
 runs/
 models/
