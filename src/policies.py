@@ -14,7 +14,7 @@ class CNNPolicy(nn.Module):
 
     def forward(self, normalized_historical_prices: torch.Tensor, previous_portfolio_weights: torch.Tensor) -> torch.Tensor:
         # normalized_historical_prices must have shape (B, F, M, N) or (F, M, N)
-        # previous_portfolio_weights must have shape (B, M+1) or (M+1,), so it includes all assets, including cash
+        # previous_portfolio_weights must have shape (B, M+1) or (M+1,), so it includes all assets, including cash (at index 0)
         # for B = batch size, F = number of features (=3), M = number of non-cash assets, N = number of periods (=50)
         x = normalized_historical_prices
         w_prev = previous_portfolio_weights

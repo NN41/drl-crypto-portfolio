@@ -88,7 +88,7 @@ print(f"n_epochs={n_epochs}, n_validations={n_validations}, n_epochs_per_validat
 
 n_available_periods = train_prices.shape[-1]
 
-# Convert to GPU tensors for gpu_mode training
+# Convert to GPU tensors for vectorized_tensor_mode training
 prices_array = torch.tensor(train_prices, device=device, dtype=torch.float32)
 portfolio_vector_memory = torch.ones((n_available_periods, n_non_cash_assets + 1), device=device, dtype=torch.float32) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
@@ -171,7 +171,7 @@ for epoch in range(n_epochs):
         batch_size=batch_size,
         device=device,
         commission_rate=commission_rate,
-        gpu_mode=True
+        vectorized_tensor_mode=True
     )
 
     n_pvm_updates = batch_size * n_batches_per_epoch
