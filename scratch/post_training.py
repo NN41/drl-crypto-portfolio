@@ -217,3 +217,13 @@ if data_set != 'train':
 print(f"  - {data_set}_ucrp_results.csv")
 
 # %%
+
+
+df = pretrained_results
+
+# [x for x in df.columns if (('close_' in x) & (not 'weight_before_' in x) & (not 'cash' in x))]
+
+prices = df[[x for x in df.columns if 'close' in x]]
+np.exp(np.log(prices / prices.shift()).max(axis=1).sum())
+
+np.log(prices / prices.shift()).max(axis=1)

@@ -201,13 +201,11 @@ def calculate_performance_metrics(df_results, resolution_minutes=30, commission_
     step_log_returns = df_results['log_returns'].values
     avg_log_return = np.mean(step_log_returns)
     step_returns = np.exp(step_log_returns) - 1
-    step_portfolio_value_multipliers = np.exp(step_log_returns)
-    apv_ratios = np.cumprod(step_portfolio_value_multipliers)
-    assert np.sum(np.abs(apv_ratios - np.exp(np.cumsum(step_log_returns)))) < 1e-9, "Large deviation between equivalent calculations of apv ratios"
+    apv_ratios = np.exp(np.cumsum(step_log_returns)) # more numerically stable than np.cumprod(np.exp(step_log_returns))
 
     transaction_remainder_factors = df_results['transaction_remainder_factor'].values
     portfolio_values_before_rebalancing = initial_portfolio_value * apv_ratios
-    transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors)
+    transaction_costs = portfolio_values_before_rebalancing * (1 - transaction_remainder_factors) # by definition of the transaction remainder factor
 
     relative_step_turnovers = (1 - transaction_remainder_factors) / commission_rate
 
