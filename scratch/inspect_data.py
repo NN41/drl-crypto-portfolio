@@ -167,7 +167,7 @@ for instrument_name, df in instruments.items():
 
         stats.append({
             'Instrument': instrument_name,
-            'Years loaded': round(years_in_data, 2),
+            'Years loaded': round(years_in_data, 6),
             'Final 30d Volume (M USD)': round(df_train['volume_30d'].iloc[-1], 2),
             'Avg Period Log Return': round(avg_period_log_return, 6),
             'Total Log Return': round(total_log_return, 2),

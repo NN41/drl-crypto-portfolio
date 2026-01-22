@@ -13,7 +13,6 @@ from src.evaluation import run_walk_forward, calculate_performance_metrics, Walk
 from src.model_io import save_model, save_checkpoint, save_run_config
 from src.data_loading import load_and_split_data
 
-
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 print(f"Using device {device}")
 
@@ -42,7 +41,7 @@ instrument_names = [
 assets = [s.split('_')[0].split('-')[0].lower() for s in instrument_names]
 features = ['high', 'low', 'close'] # follow the standard order of the OHLC acronym O-H-L-C
 
-train_prices, validation_prices, test_prices, n_train_periods, n_validation_periods, n_test_periods, all_datetimes = load_and_split_data(
+train_prices, validation_prices, test_prices, n_train_periods, n_validation_periods, n_test_periods, all_datetimes, train_availability_mask, validation_availability_mask, test_availability_mask = load_and_split_data(
     instrument_names, features, START_DATE_TRAIN, START_DATE_VALIDATION, START_DATE_TEST, END_DATE_TEST, RESOLUTION_MINUTES
 )
 print(f"(n_train_periods, n_validation_periods, n_test_periods) = {n_train_periods, n_validation_periods, n_test_periods}")
@@ -90,6 +89,7 @@ n_available_periods = train_prices.shape[-1]
 
 # Convert to GPU tensors for vectorized_tensor_mode training
 prices_array = torch.tensor(train_prices, device=device, dtype=torch.float32)
+availability_mask_tensor = torch.tensor(train_availability_mask, device=device, dtype=torch.bool)
 portfolio_vector_memory = torch.ones((n_available_periods, n_non_cash_assets + 1), device=device, dtype=torch.float32) / (n_non_cash_assets + 1)
 policy = CNNPolicy(n_features=n_features, n_recent_periods=n_recent_periods).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -171,7 +171,8 @@ for epoch in range(n_epochs):
         batch_size=batch_size,
         device=device,
         commission_rate=commission_rate,
-        vectorized_tensor_mode=True
+        availability_mask=availability_mask_tensor,
+        vectorized_tensor_mode=True,
     )
 
     n_pvm_updates = batch_size * n_batches_per_epoch
@@ -196,6 +197,7 @@ for epoch in range(n_epochs):
     if (epoch + 1) % n_epochs_per_validation == 0:
         print(f"\tRunning validation...")
         initial_portfolio = np.array([1] * (n_non_cash_assets + 1)) / (n_non_cash_assets + 1)
+        train_val_availability_mask = np.concatenate([train_availability_mask, validation_availability_mask], axis=0)
         validation_results = run_walk_forward(
             policy=policy,
             initial_weights=initial_portfolio,
@@ -204,6 +206,7 @@ for epoch in range(n_epochs):
             all_datetimes=all_datetimes,
             use_osbl=False,
             config=wf_config,
+            availability_mask=train_val_availability_mask,
         )
         validation_metrics = calculate_performance_metrics(validation_results, RESOLUTION_MINUTES, commission_rate)
         writer.add_scalar('Validation/Final_Portfolio_Value_Multiplier', validation_metrics['fAPV'], epoch+1)

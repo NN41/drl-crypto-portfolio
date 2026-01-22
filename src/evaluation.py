@@ -22,7 +22,7 @@ class WalkForwardConfig:
     geometric_parameter: float
 
 
-def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_datetimes, use_osbl, config, optimizer=None, verbose=False):
+def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_datetimes, use_osbl, config, availability_mask, optimizer=None, verbose=False):
     """
     Run walk-forward evaluation on a trading policy.
 
@@ -34,6 +34,8 @@ def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_da
         all_datetimes: Array of datetime objects for all periods
         use_osbl: Whether to use Online Stochastic Batch Learning
         config: WalkForwardConfig with fixed parameters
+        availability_mask: shape (n_periods, n_non_cash_assets), True where asset data exists.
+            For validation/test data, pass an all-True mask.
         optimizer: PyTorch optimizer (required if use_osbl=True)
         verbose: Whether to print progress updates (default False)
 
@@ -99,7 +101,8 @@ def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_da
         with torch.no_grad():
             normalized_price_tensor = torch.tensor(normalized_price_history, dtype=torch.float32, device=config.device)
             previous_weights_tensor = torch.tensor(previous_weights, dtype=torch.float32, device=config.device)
-            new_weights = policy(normalized_price_tensor, previous_weights_tensor)
+            current_mask_tensor = torch.tensor(availability_mask[current_idx], dtype=torch.bool, device=config.device)
+            new_weights = policy(normalized_price_tensor, previous_weights_tensor, current_mask_tensor)
             new_weights = new_weights.squeeze(0).cpu().numpy()
 
         # The new weights at time t allow use to compute the transaction remainder factor
@@ -144,7 +147,8 @@ def run_walk_forward(policy, initial_weights, seen_prices, unseen_prices, all_da
                 n_recent_periods=config.n_recent_periods,
                 batch_size=config.osbl_batch_size,
                 device=config.device,
-                commission_rate=config.commission_rate
+                commission_rate=config.commission_rate,
+                availability_mask=availability_mask,
             )
             policy.eval()
 

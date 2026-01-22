@@ -10,10 +10,6 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
 
-
-
-
-
 def geometrically_sample_batch_start_indices(n_samples, n_available_periods, batch_size, geometric_parameter, n_recent_periods):
     max_batch_start_index = n_available_periods - batch_size - 1 # must have enough data for batch_size consecutive actions plus one final reward
     min_batch_start_index = n_recent_periods - 1 # must have enough data for the price history
@@ -28,10 +24,13 @@ def geometrically_sample_batch_start_indices(n_samples, n_available_periods, bat
     assert chosen_indices.max() <= max_batch_start_index, "Sampled batch start index is out of bounds"
     return chosen_indices
 
-def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
+def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods, availability_mask):
     '''
     Prepares a mini-batch of training data, consisting of a consecutive sequence of price histories, previous portfolio vectors and price relatives.
     In other words, for an action at time t, we have X_t and w_{t-1} and y_{t+1}
+
+    Args:
+        availability_mask: shape (n_periods, n_non_cash_assets), True where asset data exists
     '''
     assert prices_array.shape[1] == portfolio_vector_memory.shape[-1] - 1, "Number of assets in prices must match portfolio (excluding cash)"
 
@@ -59,21 +58,28 @@ def prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, 
     assert batch_previous_weights.shape[0] == batch_size
     assert batch_next_price_relatives.shape[0] == batch_size
 
+    batch_availability_mask = availability_mask[batch_start_idx:batch_start_idx+batch_size, :] # shape (batch_size, n_non_cash_assets)
+    assert batch_availability_mask.shape == (batch_size, prices_array.shape[1])
+
     return {
         "batch_start_idx": batch_start_idx, # index corresponding to time t at which X_t is observed and action w_t is taken
         "normalized_price_histories": batch_normalized_price_histories, # X_t
         "current_price_relatives": batch_current_price_relatives, # y_t, the price relatives observable at time t, based on v_t and v_{t-1}, necessary to compute mu_t
         "previous_weights": batch_previous_weights, # w_{t-1}
         "next_price_relatives": batch_next_price_relatives, # y_{t+1}, necessary for the reward of taking action w_t
+        "availability_mask": batch_availability_mask, # shape (batch_size, n_non_cash_assets), True where asset data exists
     }
 
-def prepare_batch_of_consecutive_periods_using_vectorized_tensors(prices_tensor, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods):
+def prepare_batch_of_consecutive_periods_using_vectorized_tensors(prices_tensor, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods, availability_mask):
     '''
     Prepares a mini-batch using vectorized tensor operations (faster than Python loop).
     For an action at time t, returns X_t, w_{t-1}, y_t, and y_{t+1}.
 
     Equivalent to prepare_batch_of_consecutive_periods() but uses torch.unfold() to extract
     all sliding windows in one operation instead of looping through batch items.
+
+    Args:
+        availability_mask: shape (n_periods, n_non_cash_assets), True where asset data exists (torch tensor)
     '''
     assert prices_tensor.shape[1] == portfolio_vector_memory.shape[-1] - 1, "Number of assets in prices must match portfolio (excluding cash)"
 
@@ -102,12 +108,16 @@ def prepare_batch_of_consecutive_periods_using_vectorized_tensors(prices_tensor,
     assert batch_previous_weights.shape[0] == batch_size
     assert batch_next_price_relatives.shape[0] == batch_size
 
+    batch_availability_mask = availability_mask[batch_start_idx:batch_start_idx+batch_size, :] # shape (batch_size, n_non_cash_assets)
+    assert batch_availability_mask.shape == (batch_size, prices_tensor.shape[1])
+
     return {
         "batch_start_idx": batch_start_idx, # index corresponding to time t at which X_t is observed and action w_t is taken
         "normalized_price_histories": batch_normalized_price_histories, # X_t
         "current_price_relatives": batch_current_price_relatives, # y_t, the price relatives observable at time t, based on v_t and v_{t-1}, necessary to compute mu_t
         "previous_weights": batch_previous_weights, # w_{t-1}
         "next_price_relatives": batch_next_price_relatives, # y_{t+1}, necessary for the reward of taking action w_t
+        "availability_mask": batch_availability_mask, # shape (batch_size, n_non_cash_assets), True where asset data exists
     }
 
 def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, commission_rate, vectorized_tensor_mode=False):
@@ -127,14 +137,16 @@ def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, c
         batch_previous_weights = batch['previous_weights'].float()
         batch_current_price_relatives = batch['current_price_relatives'].float()
         batch_next_price_relatives = batch['next_price_relatives'].float()
+        batch_availability_mask = batch['availability_mask'] # already a tensor
     else:
         batch_normalized_price_histories = torch.from_numpy(batch['normalized_price_histories']).float().to(device)
         batch_previous_weights = torch.from_numpy(batch['previous_weights']).float().to(device)
         batch_current_price_relatives = torch.from_numpy(batch['current_price_relatives']).float().to(device)
         batch_next_price_relatives = torch.from_numpy(batch['next_price_relatives']).float().to(device)
+        batch_availability_mask = torch.from_numpy(batch['availability_mask']).to(device)
 
     policy.train()
-    batch_current_weights = policy(batch_normalized_price_histories, batch_previous_weights)
+    batch_current_weights = policy(batch_normalized_price_histories, batch_previous_weights, batch_availability_mask)
 
     batch_current_price_relatives = torch.cat([
         torch.ones((batch_size, 1)).to(device),
@@ -167,17 +179,20 @@ def perform_one_minibatch_update(batch, policy, optimizer, device, batch_size, c
 
     return batch_log_returns, batch_current_weights
 
-def run_one_epoch(prices_array, batch_start_indices, portfolio_vector_memory, policy, optimizer, n_recent_periods, batch_size, device, commission_rate, vectorized_tensor_mode=False):
-
+def run_one_epoch(prices_array, batch_start_indices, portfolio_vector_memory, policy, optimizer, n_recent_periods, batch_size, device, commission_rate, availability_mask, vectorized_tensor_mode=False):
+    '''
+    Args:
+        availability_mask: shape (n_periods, n_non_cash_assets), True where asset data exists
+    '''
     epoch_total_log_return = 0
     epoch_number_of_steps = 0
 
     for batch_start_idx in batch_start_indices:
 
         if vectorized_tensor_mode:
-            batch = prepare_batch_of_consecutive_periods_using_vectorized_tensors(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods)
+            batch = prepare_batch_of_consecutive_periods_using_vectorized_tensors(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods, availability_mask)
         else:
-            batch = prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods)
+            batch = prepare_batch_of_consecutive_periods(prices_array, portfolio_vector_memory, batch_start_idx, batch_size, n_recent_periods, availability_mask)
 
         batch_log_returns, batch_weights = perform_one_minibatch_update(batch=batch, policy=policy, optimizer=optimizer, device=device, batch_size=batch_size, commission_rate=commission_rate, vectorized_tensor_mode=vectorized_tensor_mode)
 
