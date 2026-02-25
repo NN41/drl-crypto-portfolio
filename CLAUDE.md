@@ -210,5 +210,5 @@
 
 ## Project Conventions
 * A year contains 365 days (not 365.25 days)
-* Short rates, (interest) rates and forward rates are assumed to be annualized and continuously compounded, unless stated otherwise.
+* (interest) rates and forward rates are assumed to be annualized and continuously compounded, unless stated otherwise.
 * Funding rates are assumed to be simple rates. They may either by 8-hourly or annualized.
