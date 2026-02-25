@@ -1,49 +1,29 @@
 # Deep Reinforcement Learning for Cryptocurrency Portfolio Management
 
-This repository contains a PyTorch implementation of the deep reinforcement learning framework for portfolio management proposed by [Jiang et al. (2017)](https://arxiv.org/abs/1706.10059). The framework uses a CNN-based Ensemble of Identical Independent Evaluators (EIIE) to learn optimal portfolio allocations across cryptocurrency assets traded on Deribit, using 30-minute trading periods. The agent is trained to maximize the log-return of a portfolio while accounting for transaction costs.
+This repository contains a PyTorch implementation of the deep reinforcement learning framework for crypto portfolio management proposed by [Jiang et al. (2017)](https://arxiv.org/abs/1706.10059).
 
-<!-- TODO: Add a one-liner on key results, e.g. "Achieves X-fold returns over Y days in backtests." -->
+The agent is trained on 3.5 years of historical 30-minute OHLC data for 11 Deribit perpetuals. On the 3-month test set, the agent easily outperforms benchmarks, achieving 59% ROI / 2.15 Sharpe, vs. -39% / -2.11 (uniform buy-and-hold) and 7.3% / 1.28 (best individual asset).
+
+We also identify key behavior patterns, such as high asset concentration, zero cash allocation and high turnover, and suggest and test a number of improvements.
 
 ## Key Features & Implementations
-- **CNN EIIE Policy:** A fully convolutional network where each asset is evaluated by an identical, independent sub-network (IIE) with shared parameters. Asset scores are combined via softmax (with a learnable cash bias) to produce portfolio weights.
-- **Transaction Cost Model:** Iterative approximation of the transaction remainder factor $\mu_t$ following the paper's formulation (Eq. 14), supporting separate buy/sell commission rates.
-- **Portfolio-Vector Memory (PVM):** Stores and retrieves previous portfolio weights during training, enabling parallel mini-batch training while accounting for transaction costs.
+- **CNN-based EIIE Policy:** A CNN implementation of the Ensemble of Identical Independent Evaluators (EIIE), in which each asset is judged independently by a CNN-based sub-network with shared parameters. Final asset scores are combined via softmax (with a learnable cash bias) to produce portfolio weights.
+- **Transaction Cost Model:** Iterative approximation of the transaction remainder factor $\mu_t$ following the paper's formulation, allowing the agent to take into account the effect of transaction costs.
+- **Portfolio-Vector Memory (PVM):** Stores and retrieves previous portfolio weights during training (similar to experience replay memory), significantly speeding up training by allowing parallelization.
 - **Online Stochastic Batch Learning (OSBL):** Geometrically-weighted sampling of mini-batches for online adaptation during walk-forward evaluation, allowing the agent to continuously learn from new market data.
-- **Walk-Forward Evaluation:** A rigorous out-of-sample testing framework that steps through unseen data one period at a time, optionally updating the policy via OSBL.
-- **Asset Availability Masking:** Handles missing data for assets that don't exist throughout the full history by masking them out of the softmax allocation.
+- **Walk-Forward Evaluation:** An out-of-sample testing framework that steps through unseen data one period at a time, optionally updating the policy via OSBL.
+<!-- - **Asset Availability Masking:** Handles missing data for assets that don't exist throughout the full history by masking them out of the softmax allocation. -->
 
 ## Demo
+Below you can see the performance of the trained agent ("OSBL") on the 3-month test set, compared to standard benchmarks*. The OSBL agent achieves 59% ROI with a 2.15 Sharpe ratio, outperforming all benchmarks (including the best individual asset, PAXG) despite a broadly declining market.
 
-<!-- TODO: Add an equity curve figure here, e.g. ![Equity Curve](./assets/equity_curve.png) -->
-<!-- TODO: Show a comparison of CNN EIIE vs benchmarks (UCRP, Buy-and-Hold) -->
 
-## Setup & Usage
+![Test Set Performance Summary](./assets/demo_test_summary.png)
 
-### Installation
+![Test Set Performance Plot](./assets/demo_test_set_performance.png)
 
-1. **Clone the repository:**
-    ```bash
-    git clone https://github.com/NN41/drl-crypto-portfolio.git
-    cd drl-crypto-portfolio
-    ```
+*\*Benchmarks: UCRP = uniform constant rebalanced portfolio, UBAH = uniform buy-and-hold. Metrics: fAPV = final accumulated portfolio value, SR = annualized Sharpe ratio, MDD = maximum drawdown.*
 
-2. **Create and activate the Conda environment:**
-    ```bash
-    conda env create -f environment.yml
-    conda activate drl-crypto-portfolio
-    ```
-
-<!-- TODO: Populate environment.yml / requirements.txt with actual dependencies (torch, pandas, numpy, plotly, etc.) -->
-
-### Running Training & Evaluation
-
-Training and evaluation are run interactively through VSCode's Python Interactive window using `# %%` cell markers.
-
-- **Training:** Open `scratch/training.py` and run cells sequentially. Training metrics and checkpoints are saved to the `runs/` directory.
-- **Post-Training Evaluation:** Open `scratch/post_training.py` to run walk-forward evaluation on train/validation/test splits and export results to CSV.
-- **Analysis & Visualization:** Open `scratch/analysis_v2.py` to load post-training CSVs and generate performance tables and plots.
-
-<!-- TODO: Add a brief note on how to configure hyperparameters (where to change them, key ones to tweak) -->
 
 ## Background & Implementation
 
@@ -111,6 +91,10 @@ This section provides a brief overview of the framework and its implementation. 
 -->
 
 ## Experiments & Results
+Diving into the behavior of the trained agent, we discover three key behaviors:
+1. Zero cash allocation. Trained agents never allocate any money to cash asset under any circumstances. Attempts to mitigate this effect through hyperparameter tweaking (such as weight decay) always fail.
+2. Low portfolio diversification.
+3. High turnover. 
 
 <!-- TODO: For each experiment group, add a subsection with:
 - What was varied and why
@@ -122,15 +106,9 @@ This section provides a brief overview of the framework and its implementation. 
 
 <!-- TODO: Describe batch size experiments from runs_completed/runs_batch/ -->
 
-### Experiment 2: Commission Rate Sensitivity
+### Experiment 2: Weight Decay
 
-<!-- TODO: Describe commission rate experiments from runs_completed/runs_fees/ -->
-
-### Experiment 3: Learning Rate Decay
-
-<!-- TODO: Describe decay experiments from runs_completed/runs_decay/ -->
-
-### Experiment 4: Asset Availability Masking
+### Experiment 3: Asset Availability Masking
 
 <!-- TODO: Describe masking experiments from runs_completed/runs_masking/ -->
 

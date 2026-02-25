@@ -17,7 +17,7 @@ from src.evaluation import calculate_performance_metrics
 # %%
 # Color scheme and styling constants
 
-# Plotly's default qualitative color sequence (px.colors.qualitative.Plotly)
+# High-contrast palette for individual assets (distinct on white background)
 DEFAULT_COLORS = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52', '#1F77B4', '#2CA02C', '#D62728', '#9467BD']
 
 def get_asset_color(asset):
@@ -52,7 +52,7 @@ for path in sorted(post_training_dirs):
 # Configuration
 
 run_dir = './runs_completed/runs_batch/260113_batch_size_500_baseline_v1'
-epoch = 10000
+epoch = 5000
 
 config_path = f'{run_dir}/run_config.json'
 with open(config_path, 'r') as f:
@@ -234,7 +234,7 @@ def plot_dataset(data_set):
     osbl_turnover = (1 - results[data_set]['osbl']['transaction_remainder_factor'].values) / commission_rate if 'osbl' in results[data_set] else None
     osbl_drawdown = m['osbl']['running_drawdown'] if 'osbl' in m else None
 
-    fig = make_subplots(rows=5, cols=1, subplot_titles=(f'{data_set.upper()}: Cumulative Log Returns', 'Portfolio Weights', 'Normalized Entropy', 'Period Turnover', 'Running Drawdown'), vertical_spacing=0.05, row_heights=[0.2, 0.2, 0.2, 0.2, 0.2], shared_xaxes=True)
+    fig = make_subplots(rows=5, cols=1, subplot_titles=(f'{data_set.upper()} SET: Cumulative Log Returns', 'Portfolio Weights', 'Normalized Entropy', 'Period Turnover', 'Running Drawdown'), vertical_spacing=0.05, row_heights=[0.6, 0.2, 0.2, 0.2, 0.2], shared_xaxes=True)
 
     # Cumulative log returns subplot - policies
     fig.add_trace(go.Scatter(x=datetimes, y=pretrained_cum_log_ret, mode='lines', name='Pretrained', line=dict(color=ps['pretrained']['color'], dash=ps['pretrained']['dash'], width=ps['pretrained']['width']), legendgroup='Pretrained'), row=1, col=1)
@@ -276,14 +276,14 @@ def plot_dataset(data_set):
     fig.update_yaxes(title_text='Turnover', row=4, col=1)
     fig.update_yaxes(title_text='Drawdown', row=5, col=1)
     for row in range(1, 6):
-        fig.update_xaxes(title_text='Date', row=row, col=1)
+        fig.update_xaxes(title_text='Date', showticklabels=True, row=row, col=1)
     fig.show()
 
 # %%
-plot_dataset('train')
+# plot_dataset('train')
 
 # %%
-plot_dataset('validation')
+# plot_dataset('validation')
 
 # %%
 plot_dataset('test')

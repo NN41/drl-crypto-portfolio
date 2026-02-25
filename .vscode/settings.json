@@ -1,4 +1,11 @@
 {
    "jupyter.notebookFileRoot": "${workspaceFolder}",
-   "terminal.integrated.cwd": "${workspaceFolder}"
+   "terminal.integrated.cwd": "${workspaceFolder}",
+   "python-envs.pythonProjects": [
+      {
+         "path": ".",
+         "envManager": "ms-python.python:conda",
+         "packageManager": "ms-python.python:conda"
+      }
+   ]
 }
