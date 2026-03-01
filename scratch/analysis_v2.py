@@ -52,7 +52,7 @@ for path in sorted(post_training_dirs):
 # Configuration
 
 run_dir = './runs_completed/runs_batch/260113_batch_size_500_baseline_v1'
-epoch = 5000
+epoch = 1000
 
 config_path = f'{run_dir}/run_config.json'
 with open(config_path, 'r') as f:
@@ -132,7 +132,8 @@ for data_set in data_sets:
         step_returns = trimmed_apv[1:] / trimmed_apv[:-1] - 1
         periodic_sr = np.mean(step_returns) / (np.std(step_returns, ddof=1) + 1e-12)
         running_max = np.maximum.accumulate(trimmed_apv)
-        all_metrics[data_set][asset] = {'fAPV': trimmed_apv[-1], 'SR': annualization_factor * periodic_sr, 'MDD': ((running_max - trimmed_apv) / running_max).max()}
+        ann_vol = annualization_factor * np.std(step_returns, ddof=1)
+        all_metrics[data_set][asset] = {'fAPV': trimmed_apv[-1], 'SR': annualization_factor * periodic_sr, 'MDD': ((running_max - trimmed_apv) / running_max).max(), 'AnnVol': ann_vol}
 
     # UBAH: mean of all asset APVs
     ubah_apv = np.mean([asset_apv[a] for a in assets], axis=0)
@@ -150,6 +151,7 @@ for data_set in data_sets:
 
 print("Metrics computed for all data sets.")
 
+
 # %%
 # Summary tables (one per data set)
 
@@ -160,18 +162,20 @@ for data_set in data_sets:
     m = all_metrics[data_set]
     best = m['_best_asset']
 
-    def make_row(name, metrics, is_policy=False):
+    pretrained_df = results[data_set].get('pretrained')
+
+    def make_row(name, metrics, is_policy=False, avg_weight=np.nan):
         row = {'Strategy': name, 'fAPV': metrics['fAPV'], 'SR': metrics['SR'], 'MDD': metrics['MDD']}
         if is_policy:
             row['AvgEntropy'] = metrics.get('avg_normalized_entropy', np.nan)
             row['AvgTurnover'] = metrics.get('avg_relative_turnover', np.nan)
             row['AvgTxCost'] = metrics.get('avg_transaction_cost', np.nan)
-            row['AvgCash'] = metrics.get('avg_cash_weight', np.nan)
         else:
             row['AvgEntropy'] = np.nan
             row['AvgTurnover'] = np.nan
             row['AvgTxCost'] = np.nan
-            row['AvgCash'] = np.nan
+        row['AvgWeight'] = avg_weight
+        row['AnnVol'] = metrics.get('AnnVol', np.nan)
         return row
 
     rows = []
@@ -184,11 +188,15 @@ for data_set in data_sets:
     rows.append(make_row('UBAH', m['ubah'], is_policy=False))
     rows.append(make_row(f'Best ({best.upper()})', m[best], is_policy=False))
 
+    if pretrained_df is not None:
+        cash_weight = pretrained_df['weight_cash'].mean()
+        rows.append(make_row('CASH', {'fAPV': np.nan, 'SR': np.nan, 'MDD': np.nan}, avg_weight=cash_weight))
     for asset in assets:
-        rows.append(make_row(asset.upper(), m[asset], is_policy=False))
+        avg_w = pretrained_df[f'weight_{asset}'].mean() if pretrained_df is not None else np.nan
+        rows.append(make_row(asset.upper(), m[asset], avg_weight=avg_w))
 
     df = pd.DataFrame(rows)
-    cols = ['Strategy', 'fAPV', 'SR', 'MDD', 'AvgEntropy', 'AvgTurnover', 'AvgTxCost', 'AvgCash']
+    cols = ['Strategy', 'fAPV', 'SR', 'MDD', 'AvgEntropy', 'AvgTurnover', 'AvgTxCost', 'AvgWeight', 'AnnVol']
     df = df[cols]
 
     print(f"\n=== {data_set.upper()} Performance ===")
@@ -206,6 +214,17 @@ for data_set in data_sets:
     print("-" * len(table_lines[0]))
     for i in range(n_main + 1, len(table_lines)):
         print(table_lines[i])
+
+    # Sharpe ratio decomposition: SR = annualization_factor * mean(step_returns) / std(step_returns, ddof=1)
+    print(f"\n--- {data_set.upper()} Sharpe Ratio Decomposition (annualized) ---")
+    print(f"{'Strategy':<20} {'Ann. Returns':>12} {'Ann. Volatility':>12} {'SR':>12}")
+    for label, key in [('Pretrained', 'pretrained'), ('OSBL', 'osbl')]:
+        if key not in m:
+            continue
+        sr_returns = m[key]['step_returns']
+        num = annualization_factor**2 * np.mean(sr_returns)
+        den = annualization_factor * np.std(sr_returns, ddof=1)
+        print(f"{label:<20} {num:>12.4f} {den:>12.4f} {num / (den + 1e-12):>12.4f}")
 
 # %%
 # Visualization function
@@ -280,10 +299,10 @@ def plot_dataset(data_set):
     fig.show()
 
 # %%
-# plot_dataset('train')
+plot_dataset('train')
 
 # %%
-# plot_dataset('validation')
+plot_dataset('validation')
 
 # %%
 plot_dataset('test')
