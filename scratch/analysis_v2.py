@@ -52,7 +52,7 @@ for path in sorted(post_training_dirs):
 # Configuration
 
 run_dir = './runs_completed/runs_batch/260113_batch_size_500_baseline_v1'
-epoch = 1000
+epoch = 4000
 
 config_path = f'{run_dir}/run_config.json'
 with open(config_path, 'r') as f:

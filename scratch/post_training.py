@@ -27,7 +27,7 @@ from src.train_utils import seed_everything
 # %%
 
 run_dir = './runs_completed/runs_batch/260113_batch_size_500_baseline_v1'
-checkpoint_filename = 'checkpoint_epoch_2000.pt'
+checkpoint_filename = 'checkpoint_epoch_0.pt'
 data_set = 'test'  # 'train', 'validation', or 'test'
 
 # %%
