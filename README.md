@@ -70,7 +70,6 @@ Below we show the average log return on the training set and the annualized Shar
 - **Epochs 2000-4000 (Lucky Gains).** The validation Sharpe suddenly increases from 1.8 to 3.2. However, this progress is driven by a doubling of the returns, not by better risk management. The agent continues making highly aggressive, concentrated bets. On top of that, it has now also picked up on subtle micro-patterns in the training data that only coincidentally generalize to the validation set. Unfortunately, this improvement on the validation set does not generalize to the test set: the test Sharpe slips from 2.1 to 2.0. OSBL manages to pull the test Sharpe back up to empirical maximum of 2.2.
 - **Epochs 4000+ (More Overfitting).** Both the average log return on the training set, as well as the L2 norm of the model's parameters keep increasing at the same steady pace, while the validation Sharpe steadily degrades. By epoch 10000, the test Sharpe has also dropped to 1.7 and OSBL cannot mitigate this degradation anymore. It is now clear that the agent is severly overtrained.
 
-
 ## Effect of OSBL
 The previous section shows that OSBL can act as a powerful mechanism to handle the non-stationarity of financial price data, but *only* if the base network retains sufficient adaptability.
 
@@ -80,13 +79,22 @@ Conversely, applying OSBL to an overtrained agent yields diminishing or even neg
 
 The takeaway is that, in non-stationary environments like crypto markets, it seems more effective to undertrain the network and use OSBL for online adaptation, rather than relying on an overtrained static network.
 
+
+## Fixing the Issue of Zero Cash Allocation
+The agent gets stuck completely ignoring cash, because the gradient of the cash bias parameter vanishes early in training (see the epochs 0-600 of the deep-dive section) and its value gets overwhelmed by the voting scores of the non-cash assets.
+1. **Applying a penalty to negative returns.** This made the training process extremely unstable and hyperparameter-sensitive: set it too low and cash will end up being ignored; set it too high and the agent parks all of its capital in cash.
+2. **Asset availability masking.** Following the paper's implementation, we set the normalized price histories of unavailable assets to 1 (identical to cash). We hypothesized that the agent was confusing the two. We tweaked the network architecture so that unavailable assets could be masked out entirely, but final performance barely changed. The possible confusion only exists in the training data where some assets' records aren't available yet, not in the validation/test set.
+3. **Removing the cash bias parameter (solution).** Instead of using a separate learnable cash bias, as the paper does, we treat cash as just another asset with a fixed price of 1, processed by the CNN identically to any other non-cash asset. This prevents the gradient-vanishing problem that killed cash allocation in the old architecture.
+
+![Validation Sharpes of old and new agent](./assets/cash_fix_sharpe.png)
+
+As a result, the average cash weight stabilizes at ~15% on the training set instead of crashing to zero. This weight is taken from PAXG and BNB, two low-volatility assets that the old agent was using as safe-haven assets in absence of cash. The improved agent peaks at a 3.3 validation Sharpe, though test set performance has significantly degraded because of overtraining. On the other hand, an undertrained epoch-400 agent with the new architecture and OSBL (11.1% average cash weight) matches the demo agent's test performance.
+
 <!-- ## Results & Experiments
 
 ### Experiment 1: Batch Size
 
 ### Experiment 2: Weight Decay
-
-### Experiment 3: Asset Availability Masking
 
 ## Conclusions
 
