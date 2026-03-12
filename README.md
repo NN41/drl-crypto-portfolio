@@ -90,22 +90,23 @@ The agent gets stuck completely ignoring cash, because the gradient of the cash 
 
 As a result, the average cash weight stabilizes at ~15% on the training set instead of crashing to zero. This weight is taken from PAXG and BNB, two low-volatility assets that the old agent was using as safe-haven assets in absence of cash. The improved agent peaks at a 3.3 validation Sharpe, though test set performance has significantly degraded because of overtraining. On the other hand, an undertrained epoch-400 agent with the new architecture and OSBL (11.1% average cash weight) matches the demo agent's test performance.
 
-<!-- ## Results & Experiments
 
-### Experiment 1: Batch Size
+## Addressing Liquidity and Turnover Concerns
+The original paper assumes frictionless markets: that we are able to execute at the interval's close price and there is no market impact. In practice, we have to deal with bid-ask spreads and illiquid assets. The agent's tendency to flip the entire portfolio into illiquid assets does not translate well to the real world.
 
-### Experiment 2: Weight Decay
+To illustrate the problem with our Deribit perpetuals:
+* **BTC-PERPETUAL**: ~$360M daily volume, tight bid-ask spread of ~0.07 bps, and ~$700K available within 10 bps of top-of-book.
+* **UNI_USDC-PERPETUAL**: ~$70K daily volume, ~13 bps bid-ask spread, only ~$4K available within 10 bps.
 
-## Conclusions
-
-A number of points should be highlighted.
-- **Zero market impact and zero slippage is unrealistic**. The two assumptions that the paper makes of zero market impact and zero slippage are completely unrealistic for most Deribit perpetuals in this project. For example, the least-traded perpetual, UNI, only has ~300k USD daily volume and the market is very illiquid. The bid-ask spread is 5 times the tick size and there is only 15k USD size within 50 bips from the top-of-book. We see similar patterns for the other less popular perpetuals. The DOT perpetual has bid-ask spread of 500 times the tick size. For live trading, we must limit ourselves to highly liquid markets (such as inverse BTC and ETH perpetuals) and include a model of market impact and slippage.
-- The fact that BTC and ETH are relatively absent in the portfolio of the trained agents makes me think that it's picking up on patterns in the altcoins. Since they are usually more volatile, the upside is way higher (and so is the downside).
-- How to deal with zero cash allocation? Maybe we should not treat it as a separate cash bias, but as part of the network, similarly to how we treat each other asset. We see that PAXG is used as a safe haven instead of cash.
+The agent from the demo exploits the frictionless assumption. Because the agent optimizes over realized historical data, it learns to maximize returns by increasing the voting score of the best-performing asset. The L2 regularization that the paper applies, at a value of 1e-8, is vastly insufficient. As a result, the network weights explode, the logits grow indefinitely, and the softmax outputs converge to degenerate one-hot weight vectors. This runaway effect results in the agent placing highly concentrated bets and flipping its entire portfolio between periods, generating unrealistic turnover.
 
 
-We should look into the following improvements:
-- More realistic modeling of market impact and slippage, in order to punish unrealistic turnover, especially in illiquid altcoins. Alternatively, we could add a penalty term to the reward function that punishes high turnover.
-- Adjust the reward function to take into account downside risk. -->
+To make the agent's behavior more viable for real-world trading, we experiement with three approaches to mitigate the turnover issues.
+1. **Increasing the Commission Rate**. We can artificially increase the commission rate (past Deribit's 5 bps taker fees) to act as a proxy for slippage. However, this approach is too blunt. As we increase the commission rate, trading across all assets grinds to a halt, and the agent gets stuck in unfavorable positions, leading to massive performance hits.
+2. **Stronger L2 Regularization**. Increasing the L2 penalty from 1e-8 to 7e-6 prevents the network weights from blowing up, which limits the high-turnover single-asset behavior. This successfully prevents the agent from overfitting. On the validation set, average normalized entropy stabilizes at 0.4, up from 0.15, and peak average turnover drops from 50% to 30% per period.
+3. **Per-Asset Transaction Size Penalty**. To explicitly model relative liquidity, we modified the reward function by subtracting a penalty: $\text{penalty\_term} = \lambda \cdot \sum_{i=1}^{N} (\alpha_i \cdot \text{abs\_change\_in\_asset\_weight}_i)$, with $\alpha_i$ per-asset illiquidity multipliers and $\lambda$ the overall penalty multiplier. We base the per-asset multipliers on the ratios between the daily volumes (for example, BTC/ETH are set to ~0, while DOT uses 4.9). We find that a $\lambda$ between 7e-5 and 1e-4 works well, with similar performance on the validation set up to epoch ~1500 (see image below). The penalty avoids the overfitting after epoch 1000 that the demo agent suffers from. We see the average turnover peak at 35%, down from 50% (see image below).  
 
+Ideally, market impact would be directly integrated into the transaction remainder factor $\mu_t$. However, the entire framework is based on the agent choosing weights, so we would need to feed the agent the notionals separately. Using the transaction size penalty is an effective, pragmatic workaround.
 
+![Illiquidity Penalty Validation Sharpe](./assets/illiq_penalty_sharpe.png)
+![Illiquidity Penalty Validation Turnover](./assets/illiq_penalty_turnover.png)
